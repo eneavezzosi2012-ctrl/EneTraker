@@ -1,0 +1,1769 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, minimum-scale=1.0, user-scalable=no, viewport-fit=cover"/>
+  <meta name="mobile-web-app-capable" content="yes"/>
+  <meta name="apple-mobile-web-app-capable" content="yes"/>
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"/>
+  <title>Enea · Tracker</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com"/>
+  <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=DM+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@500;600&display=swap" rel="stylesheet"/>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body, #root { height: 100%; background: #060810; }
+    body { overscroll-behavior: none; -webkit-tap-highlight-color: transparent; }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+  <script>
+// ── Data seed v10: partenza PULITA — nessun dato pre-caricato ───────────────
+(function(){
+  if(localStorage.getItem('enea_data_version')==='10')return;
+  // Se esiste ancora il profilo seed "Enea" di default, lo azzeriamo
+  try{
+    const pRaw=localStorage.getItem('enea_profile');
+    if(pRaw){const p=JSON.parse(pRaw);if(p&&p.name==='Enea'&&p.age===13)localStorage.setItem('enea_profile',JSON.stringify({name:"",age:0,weight:0,height:0}));}
+  }catch{}
+  // Rimuovi piano allenamento/alimentare pre-caricati (l'utente personalizza da zero)
+  ['enea_custom_schedule','enea_custom_meal_plan'].forEach(k=>{try{localStorage.removeItem(k);}catch{}});
+  // MANTIENI le partite FIP — l'utente può ripristinarle selettivamente dalle impostazioni
+  localStorage.setItem('enea_data_version','10');
+})();
+</script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.3/babel.min.js"></script>
+  <script type="text/babel" data-presets="react">
+const { useState, useEffect, useRef } = React;
+
+const DAYS_SHORT = ["Lun","Mar","Mer","Gio","Ven","Sab","Dom"];
+const DAYS_LETTER = ["L","M","M","G","V","S","D"];
+
+const SCHEDULE = {
+  0:{label:"Lunedì",   type:"custom",icon:"💪",exercises:[],skills:[],note:""},
+  1:{label:"Martedì",  type:"custom",icon:"💪",exercises:[],skills:[],note:""},
+  2:{label:"Mercoledì",type:"custom",icon:"💪",exercises:[],skills:[],note:""},
+  3:{label:"Giovedì",  type:"custom",icon:"💪",exercises:[],skills:[],note:""},
+  4:{label:"Venerdì",  type:"custom",icon:"💪",exercises:[],skills:[],note:""},
+  5:{label:"Sabato",   type:"custom",icon:"💪",exercises:[],skills:[],note:""},
+  6:{label:"Domenica", type:"custom",icon:"💪",exercises:[],skills:[],note:""},
+};
+
+const MEALS = ["Colazione","Spuntino","Pranzo","Merenda","Cena"];
+const MEAL_ICONS = ["☀️","🍎","🍽️","🥤","🌙"];
+
+const MEAL_PLAN = {
+  "Colazione":{target:"",examples:[],warning:null},
+  "Spuntino": {target:"",examples:[],warning:null},
+  "Pranzo":   {target:"",examples:[],warning:null},
+  "Merenda":  {target:"",examples:[],warning:null},
+  "Cena":     {target:"",examples:[],warning:null},
+};
+
+const QUOTES = [
+  {text:"I campioni si costruiscono nei giorni in cui nessuno guarda.",author:"Kobe Bryant"},
+  {text:"Il dolore che senti oggi e la forza che sentirai domani.",author:"Anonimo"},
+  {text:"Non e la pratica che rende perfetti. E la pratica perfetta.",author:"Vince Lombardi"},
+  {text:"Ogni mattina hai due scelte: dormire o inseguire i tuoi sogni.",author:"Michael Jordan"},
+  {text:"La grandezza non e un dono. E sudore.",author:"LeBron James"},
+  {text:"La disciplina e il ponte tra gli obiettivi e i risultati.",author:"Jim Rohn"},
+  {text:"Un campione si rialza anche quando non puo.",author:"Jack Dempsey"},
+  {text:"Non fermarti quando sei stanco. Fermati quando hai finito.",author:"David Goggins"},
+  {text:"Il successo e la somma di piccoli sforzi ripetuti ogni giorno.",author:"Robert Collier"},
+  {text:"Allenati come se non avessi mai vinto. Gioca come se non avessi mai perso.",author:"Anonimo"},
+];
+
+function load(k,fb){try{const v=localStorage.getItem("enea_"+k);return v?JSON.parse(v):fb;}catch{return fb;}}
+function save(k,v){try{localStorage.setItem("enea_"+k,JSON.stringify(v));}catch{}}
+function todayStr(){return new Date().toISOString().split("T")[0];}
+function getWD(){const d=new Date(),m=new Date(d);m.setDate(d.getDate()-((d.getDay()+6)%7));return Array.from({length:7},(_,i)=>{const x=new Date(m);x.setDate(m.getDate()+i);return x.toISOString().split("T")[0];});}
+function fileToB64(f){return new Promise(r=>{const fr=new FileReader();fr.onload=()=>r(fr.result.split(",")[1]);fr.readAsDataURL(f);});}
+function starsToScore(s){return s>0?(s-1)/4:null;}
+function scoreToColor(s){if(s===null||s===undefined)return"rgba(255,255,255,0.12)";if(s>=0.8)return"#00da78";if(s>=0.5)return"#ffcc00";return"#ff4000";}
+function foodScoreLabel(s){if(s===null)return"-";if(s>=0.85)return"Ottimo";if(s>=0.7)return"Bene";if(s>=0.5)return"Normale";if(s>=0.3)return"Male";return"Pessimo";}
+
+const CSS=`
+@import url('https://fonts.googleapis.com/css2?family=Bebas+Neue&family=DM+Sans:ital,wght@0,300;0,400;0,500;0,600;0,700;1,400&family=JetBrains+Mono:wght@500;600&display=swap');
+*{box-sizing:border-box;margin:0;padding:0;}
+html,body{background:#060810;overscroll-behavior:none;}
+::-webkit-scrollbar{width:2px;}::-webkit-scrollbar-thumb{background:rgba(255,70,0,0.25);border-radius:2px;}
+.app{font-family:'DM Sans',sans-serif;background:#060810;min-height:100vh;color:#fff;max-width:430px;margin:0 auto;}
+.H{font-family:'Bebas Neue',sans-serif;letter-spacing:.5px;}
+.MONO{font-family:'JetBrains Mono',monospace;}
+.tc{padding:12px 14px 100px;overflow-y:auto;height:calc(100vh - 64px);scroll-behavior:smooth;}
+.card{background:rgba(255,255,255,0.032);backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);border-radius:20px;padding:16px;margin-bottom:11px;border:1px solid rgba(255,255,255,0.055);}
+.co{border-color:rgba(255,70,0,0.28);box-shadow:0 0 32px rgba(255,60,0,0.06);}
+.cb{border-color:rgba(0,140,255,0.22);}
+.cg{border-color:rgba(0,218,120,0.22);}
+.cp{border-color:rgba(160,120,255,0.22);}
+.pill{display:inline-flex;align-items:center;padding:3px 10px;border-radius:20px;font-size:11px;font-weight:600;letter-spacing:.2px;}
+.po{background:rgba(255,70,0,0.12);color:#ff6520;border:1px solid rgba(255,70,0,0.22);}
+.pg{background:rgba(0,218,120,0.12);color:#00da78;border:1px solid rgba(0,218,120,0.22);}
+.pb{background:rgba(0,140,255,0.12);color:#4db8ff;border:1px solid rgba(0,140,255,0.22);}
+.pp{background:rgba(160,120,255,0.12);color:#c0a0ff;border:1px solid rgba(160,120,255,0.22);}
+.pbar{height:4px;background:rgba(255,255,255,0.07);border-radius:2px;overflow:hidden;}
+.pf{height:100%;border-radius:2px;transition:width .7s cubic-bezier(.4,0,.2,1);}
+.inp{background:rgba(255,255,255,0.055);border:1px solid rgba(255,255,255,0.09);border-radius:13px;color:#fff;padding:10px 14px;font-family:'DM Sans';font-size:16px;outline:none;width:100%;transition:border .2s,background .2s;}
+.inp:focus{border-color:rgba(255,70,0,0.5);background:rgba(255,60,0,0.04);}
+.inp-date{background:rgba(255,255,255,0.055);border:1px solid rgba(255,255,255,0.09);border-radius:13px;color:#fff;padding:10px 14px;font-family:'DM Sans';font-size:16px;outline:none;width:100%;}
+.btn-p{background:linear-gradient(135deg,#ff3500,#ff6800);border:none;border-radius:13px;color:#fff;padding:10px 18px;font-family:'DM Sans';font-size:14px;font-weight:700;cursor:pointer;transition:opacity .15s;}
+.btn-p:active{opacity:.8;}
+.btn-s{background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.1);border-radius:13px;color:rgba(255,255,255,0.55);padding:9px 14px;font-family:'DM Sans';font-size:13px;font-weight:500;cursor:pointer;}
+.btn-g{background:none;border:none;color:rgba(255,255,255,0.28);cursor:pointer;padding:4px;}
+.ck{width:24px;height:24px;border-radius:7px;border:1.5px solid rgba(255,255,255,0.15);background:transparent;cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:12px;transition:all .18s;flex-shrink:0;color:#fff;}
+.ck.done{background:#ff4000;border-color:#ff4000;}
+.ck.dg.done{background:#00da78;border-color:#00da78;}
+.tag{padding:5px 13px;border-radius:20px;border:1px solid rgba(255,255,255,0.09);background:transparent;color:rgba(255,255,255,0.35);font-family:'DM Sans';font-size:13px;font-weight:500;cursor:pointer;transition:all .18s;}
+.nb{display:flex;flex-direction:column;align-items:center;gap:2px;cursor:pointer;flex:1;padding:6px 4px 8px;background:transparent;border:none;color:rgba(255,255,255,0.22);transition:color .2s;}
+.nb.active{color:#ff4000;}
+.nb span{font-family:'DM Sans';font-size:9px;font-weight:700;letter-spacing:.6px;text-transform:uppercase;}
+.wb{background:rgba(0,140,255,0.08);border:1px solid rgba(0,140,255,0.15);border-radius:10px;color:#4db8ff;padding:8px 14px;font-family:'DM Sans';font-size:16px;cursor:pointer;}
+textarea{background:rgba(255,255,255,0.055);border:1px solid rgba(255,255,255,0.09);border-radius:13px;color:#fff;padding:10px 14px;font-family:'DM Sans';font-size:16px;outline:none;width:100%;resize:none;line-height:1.65;}
+textarea:focus{border-color:rgba(255,70,0,0.4);}
+.sc{background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.07);border-radius:13px;padding:11px 12px;display:flex;align-items:center;gap:10px;}
+.arr{background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.09);border-radius:9px;color:rgba(255,255,255,0.4);font-size:16px;width:32px;height:32px;cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;transition:all .15s;}
+.arr:disabled{color:rgba(255,255,255,0.1);cursor:default;}
+.arr:not(:disabled):active{background:rgba(255,70,0,0.12);color:#ff6520;}
+@keyframes su{from{transform:translateY(10px);opacity:0}to{transform:translateY(0);opacity:1}}.su{animation:su .26s ease;}
+@keyframes fl{0%,100%{transform:scale(1) rotate(-2deg)}33%{transform:scale(1.12) rotate(2deg)}66%{transform:scale(.93) rotate(-1deg)}}
+@keyframes pulse{0%,100%{box-shadow:0 0 0 0 rgba(255,70,0,0.35)}70%{box-shadow:0 0 0 10px rgba(255,70,0,0)}}.pulse{animation:pulse 2s infinite;}
+`;
+
+function Donut({pct,color,size=86,stroke=8,label,sublabel,children}){
+  const r=size/2-stroke;const c=2*Math.PI*r;const f=c*Math.min(pct,100)/100;
+  return(
+    <div style={{display:"flex",flexDirection:"column",alignItems:"center",gap:5}}>
+      <div style={{position:"relative",width:size,height:size}}>
+        <svg width={size} height={size} style={{transform:"rotate(-90deg)"}}>
+          <circle cx={size/2} cy={size/2} r={r} fill="none" stroke="rgba(255,255,255,0.07)" strokeWidth={stroke}/>
+          <circle cx={size/2} cy={size/2} r={r} fill="none" stroke={color} strokeWidth={stroke} strokeDasharray={f+" "+(c-f)} strokeLinecap="round" style={{transition:"stroke-dasharray .7s cubic-bezier(.4,0,.2,1)"}}/>
+        </svg>
+        <div style={{position:"absolute",inset:0,display:"flex",alignItems:"center",justifyContent:"center"}}>
+          {children||<span style={{fontFamily:"'JetBrains Mono'",fontSize:13,fontWeight:600,color}}>{Math.round(pct)}%</span>}
+        </div>
+      </div>
+      {label&&<div style={{fontSize:11,fontWeight:600,color:"rgba(255,255,255,0.6)",letterSpacing:.2}}>{label}</div>}
+      {sublabel&&<div style={{fontSize:10,color:"rgba(255,255,255,0.25)",textAlign:"center",maxWidth:78}}>{sublabel}</div>}
+    </div>
+  );
+}
+
+function App(){
+  const [tab,setTab]=useState("home");
+  const td=todayStr();
+  const wd=getWD();
+  const dow=(new Date().getDay()+6)%7;
+  const FIP_MATCHES_DATES=["2026-04-18","2026-04-25","2026-05-03","2026-05-10","2026-05-17"];
+  const todayIsFipGame=FIP_MATCHES_DATES.includes(td);
+  // Leggi lo schedule custom direttamente da localStorage (non aspettare React state)
+  const [customSchedule,setCustomSchedule]=useState(()=>load("custom_schedule",null));
+  const [customMealPlan,setCustomMealPlan]=useState(()=>load("custom_meal_plan",null));
+  useEffect(()=>{if(customSchedule)save("custom_schedule",customSchedule);},[customSchedule]);
+  useEffect(()=>{if(customMealPlan)save("custom_meal_plan",customMealPlan);},[customMealPlan]);
+  const effectiveSched=(customSchedule&&customSchedule[dow])?customSchedule:SCHEDULE;
+  const sched=todayIsFipGame?{...(effectiveSched[6]||SCHEDULE[6]),label:"GAME DAY — Partita FIP",type:"game"}:(effectiveSched[dow]||SCHEDULE[dow]);
+
+  const [profile,setProfile]=useState(()=>load("profile",{name:"",age:0,weight:0,height:0}));
+  const [dailyLogs,setDailyLogs]=useState(()=>load("dlogs",{}));
+  const [meals,setMeals]=useState(()=>load("meals_"+td,{}));
+  const [water,setWater]=useState(()=>load("water_"+td,0));
+  const [exercises,setExercises]=useState(()=>load("ex_"+td,{}));
+  const [skills,setSkills]=useState(()=>load("sk_"+td,{}));
+  const [trainingDone,setTrainingDone]=useState(()=>load("tdone_"+td,false));
+  const [streak,setStreak]=useState(()=>load("streak",0));
+  const [completedDays,setCompletedDays]=useState(()=>load("cdays",{}));
+  const [goals,setGoals]=useState(()=>load("goals",[]));
+  const [tasks,setTasks]=useState(()=>load("tasks_v2",[]));
+  const [taskDone,setTaskDone]=useState(()=>load("tdone2_"+td,{}));
+  const [specialTasks,setSpecialTasks]=useState(()=>load("stasks",[]));
+  const [note,setNote]=useState(()=>load("note_"+td,""));
+  const [foodStars,setFoodStars]=useState(()=>load("fstars_"+td,0));
+  // imprevisto: {skippedEx: Set->array, skippedMeals: Set->array, skippedTasks: Set->array}
+  const [skippedEx,setSkippedEx]=useState(()=>new Set(load("skip_ex_"+td,[])));
+  const [skippedMeals,setSkippedMeals]=useState(()=>new Set(load("skip_meals_"+td,[])));
+  const [skippedTasks2,setSkippedTasks2]=useState(()=>new Set(load("skip_tasks_"+td,[])));
+  const [newGoal,setNewGoal]=useState("");
+  const [goalCat,setGoalCat]=useState("basket");
+  const [newGoalDate,setNewGoalDate]=useState("");
+  const [newTask,setNewTask]=useState("");
+  const [calEvents,setCalEvents]=useState(()=>load("cal_events",[]));
+  useEffect(()=>{save("cal_events",calEvents);},[calEvents]);
+  // Inietta le partite FIP come eventi nel calendario
+  const FIP_MATCHES=[
+    {date:"2026-04-18",hour:18,opponent:"Dream Basket Pisa",location:"Paladream Rosso, Pisa",home:false},
+    {date:"2026-04-25",hour:15,opponent:"Pall. Castelfranco Frog",location:"Palazzetto Cerreto Guidi",home:true},
+    {date:"2026-05-03",hour:11,opponent:"B.N.V. Juve Pontedera",location:"Pal.to Zoli, Pontedera",home:false},
+    {date:"2026-05-10",hour:18,opponent:"C.S. Etrusca Basket",location:"Palazzetto Cerreto Guidi",home:true},
+    {date:"2026-05-17",hour:15,opponent:"Basket San Casciano",location:"Palestra Com., San Casciano",home:false},
+  ];
+  useEffect(()=>{
+    setCalEvents(prev=>{
+      const existingIds=new Set(prev.map(e=>e.id));
+      const toAdd=FIP_MATCHES.filter(m=>!existingIds.has("fip_"+m.date)).map(m=>({
+        id:"fip_"+m.date,
+        text:(m.home?"🏠 ":"✈️ ")+"Partita vs "+m.opponent,
+        hour:m.hour,duration:2,date:m.date,
+        subtitle:m.location,
+      }));
+      return toAdd.length>0?[...prev,...toAdd]:prev;
+    });
+  },[]);
+
+  useEffect(()=>{save("profile",profile);},[profile]);
+  useEffect(()=>{save("dlogs",dailyLogs);},[dailyLogs]);
+  useEffect(()=>{save("meals_"+td,meals);},[meals]);
+  useEffect(()=>{save("water_"+td,water);},[water]);
+  useEffect(()=>{save("ex_"+td,exercises);},[exercises]);
+  useEffect(()=>{save("sk_"+td,skills);},[skills]);
+  useEffect(()=>{save("tdone_"+td,trainingDone);},[trainingDone]);
+  useEffect(()=>{save("streak",streak);},[streak]);
+  useEffect(()=>{save("cdays",completedDays);},[completedDays]);
+  useEffect(()=>{save("goals",goals);},[goals]);
+  useEffect(()=>{save("tasks_v2",tasks);},[tasks]);
+  useEffect(()=>{save("tdone2_"+td,taskDone);},[taskDone]);
+  useEffect(()=>{save("stasks",specialTasks);},[specialTasks]);
+  useEffect(()=>{save("note_"+td,note);},[note]);
+  useEffect(()=>{save("fstars_"+td,foodStars);},[foodStars]);
+  useEffect(()=>{save("skip_ex_"+td,[...skippedEx]);},[skippedEx]);
+  useEffect(()=>{save("skip_meals_"+td,[...skippedMeals]);},[skippedMeals]);
+  useEffect(()=>{save("skip_tasks_"+td,[...skippedTasks2]);},[skippedTasks2]);
+
+  const todayTasks=tasks.filter(t=>{
+    if(!t.days)return true;
+    if(t.days.length===1&&t.days[0]===7)return false; // "solo game day" senza FIP
+    return t.days.includes(dow);
+  });
+  const compTasks=todayTasks.filter(t=>taskDone[t.id]).length;
+  const taskPct=todayTasks.length>0?Math.round((compTasks/todayTasks.length)*100):0;
+
+  useEffect(()=>{setDailyLogs(prev=>({...prev,[td]:{foodStars,trainingDone,taskPct,skippedEx:[...skippedEx],skippedMeals:[...skippedMeals],skippedTasks:[...skippedTasks2]}}));},[foodStars,trainingDone,taskPct,skippedEx,skippedMeals,skippedTasks2]);
+
+  const exList=sched.exercises||[];
+  const skList=sched.skills||[];
+  const compEx=exList.filter(e=>exercises[e.name]).length;
+  const compSk=skList.filter(s=>skills[s]).length;
+  const total=exList.length+skList.length;
+  const allDone=total>0&&compEx+compSk===total;
+
+  useEffect(()=>{
+    if(allDone&&!trainingDone){
+      setTrainingDone(true);
+      setCompletedDays(prev=>({...prev,[td]:true}));
+      const y=new Date();y.setDate(y.getDate()-1);const yd=y.toISOString().split("T")[0];
+      setStreak(completedDays[yd]?streak+1:1);
+    }
+  },[compEx,compSk]);
+
+  function markGameDone(){
+    setTrainingDone(true);setCompletedDays(prev=>({...prev,[td]:true}));
+    const y=new Date();y.setDate(y.getDate()-1);const yd=y.toISOString().split("T")[0];
+    setStreak(completedDays[yd]?streak+1:1);
+  }
+
+  const weekComp=wd.filter(d=>completedDays[d]).length;
+  const compGoals=goals.filter(g=>g.done).length;
+  const bmi=(profile.height>0&&profile.weight>0)?(profile.weight/((profile.height/100)**2)).toFixed(1):"—";
+
+  const p={
+    profile,setProfile,customMealPlan,customSchedule,
+    dailyLogs,td,wd,dow,sched,completedDays,trainingDone,markGameDone,
+    tasks,setTasks,todayTasks,taskDone,
+    toggleTask:id=>setTaskDone(prev=>({...prev,[id]:!prev[id]})),
+    addTask:()=>{if(!newTask.trim())return;setTasks(prev=>[...prev,{id:Date.now(),text:newTask,subtitle:"",days:[0,1,2,3,4,5,6]}]);setNewTask("");},
+    newTask,setNewTask,specialTasks,setSpecialTasks,
+    note,setNote,water,setWater,weekComp,compGoals,goals,compTasks,taskPct,streak,bmi,
+    meals,setMeals,foodStars,setFoodStars,
+    exercises,toggleEx:ex=>setExercises(prev=>({...prev,[ex]:!prev[ex]})),
+    skills,toggleSk:sk=>setSkills(prev=>({...prev,[sk]:!prev[sk]})),
+    compEx,compSk,total,allDone,
+    toggleGoal:id=>setGoals(prev=>prev.map(g=>g.id===id?{...g,done:!g.done}:g)),
+    removeGoal:id=>setGoals(prev=>prev.filter(g=>g.id!==id)),
+    addGoal:()=>{if(!newGoal.trim())return;setGoals(prev=>[...prev,{id:Date.now(),text:newGoal,done:false,category:goalCat,deadline:newGoalDate||null}]);setNewGoal("");setNewGoalDate("");},
+    newGoal,setNewGoal,goalCat,setGoalCat,newGoalDate,setNewGoalDate,
+    skippedEx,setSkippedEx,skippedMeals,setSkippedMeals,skippedTasks2,setSkippedTasks2,
+    calEvents,setCalEvents,
+  };
+
+  const [editMode,setEditMode]=useState(false);
+
+  useEffect(()=>{if(customSchedule)save("custom_schedule",customSchedule);},[customSchedule]);
+  useEffect(()=>{if(customMealPlan)save("custom_meal_plan",customMealPlan);},[customMealPlan]);
+
+  const TABS=[{id:"home",icon:"⌂",label:"Home"},{id:"nutrition",icon:"◎",label:"Cibo"},{id:"training",icon:"◈",label:"Train"},{id:"calendar",icon:"▦",label:"Piano"},{id:"tasks",icon:"✓",label:"Task"}];
+
+  return(
+    <div className="app">
+      <style>{CSS}</style>
+      <div style={{padding:"14px 16px 0",display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+        <div>
+          <div className="H" style={{fontSize:28,lineHeight:1,color:"#fff",letterSpacing:1}}>{(profile.name||"App").toUpperCase()}</div>
+          <div style={{fontSize:10,color:"rgba(255,255,255,0.24)",marginTop:3,fontWeight:500,letterSpacing:.3,textTransform:"uppercase"}}>{new Date().toLocaleDateString("it-IT",{weekday:"long",day:"numeric",month:"long"})}</div>
+        </div>
+        <div style={{display:"flex",gap:9,alignItems:"center"}}>
+          <button onClick={()=>setEditMode(!editMode)} style={{background:editMode?"rgba(255,60,0,0.15)":"rgba(255,255,255,0.06)",border:`1px solid ${editMode?"rgba(255,60,0,0.35)":"rgba(255,255,255,0.1)"}`,borderRadius:11,padding:"7px 11px",cursor:"pointer",color:editMode?"#ff6520":"rgba(255,255,255,0.4)",fontSize:15,transition:"all .2s"}}>⚙️</button>
+          <div style={{background:"rgba(255,50,0,0.1)",border:"1px solid rgba(255,50,0,0.22)",borderRadius:13,padding:"6px 12px",textAlign:"center",minWidth:52}}>
+            <div style={{fontSize:20,lineHeight:1,animation:"fl 3s ease-in-out infinite",display:"inline-block"}}>🔥</div>
+            <div style={{fontSize:11,color:"#ff6520",fontWeight:700,marginTop:1,fontFamily:"'JetBrains Mono'"}}>{streak}d</div>
+          </div>
+        </div>
+      </div>
+      <div className="tc su">
+        {editMode
+          ? <SettingsTab
+              profile={profile} setProfile={setProfile}
+              customSchedule={customSchedule||SCHEDULE} setCustomSchedule={setCustomSchedule}
+              customMealPlan={customMealPlan||MEAL_PLAN} setCustomMealPlan={setCustomMealPlan}
+              tasks={tasks} setTasks={setTasks}
+              goals={goals} setGoals={setGoals}
+              onClose={()=>setEditMode(false)}
+              dailyLogs={dailyLogs} setDailyLogs={setDailyLogs}
+              completedDays={completedDays} setCompletedDays={setCompletedDays}
+              setStreak={setStreak}
+            />
+          : <>
+              {tab==="home"&&<HomeTab {...p}/>}
+              {tab==="nutrition"&&<NutritionTab {...p}/>}
+              {tab==="training"&&<TrainingTab {...p}/>}
+              {tab==="calendar"&&<CalendarTab calEvents={p.calEvents} setCalEvents={p.setCalEvents}/>}
+              {tab==="tasks"&&<TasksTab {...p}/>}
+            </>
+        }
+      </div>
+      {!editMode&&<div style={{position:"fixed",bottom:0,left:"50%",transform:"translateX(-50%)",width:"100%",maxWidth:430,background:"rgba(6,8,16,0.97)",backdropFilter:"blur(28px)",WebkitBackdropFilter:"blur(28px)",borderTop:"1px solid rgba(255,255,255,0.05)",display:"flex",padding:"4px 0 env(safe-area-inset-bottom,10px)",zIndex:100}}>
+        {TABS.map(t=>(
+          <button key={t.id} className={"nb "+(tab===t.id?"active":"")} onClick={()=>setTab(t.id)}>
+            <span style={{fontSize:19,lineHeight:1}}>{t.icon}</span>
+            <span>{t.label}</span>
+          </button>
+        ))}
+      </div>}
+    </div>
+  );
+}
+
+
+function PartiteCalendar(){
+  const PARTITE=[
+    {date:"2026-04-18",ora:"18:15",avversario:"Dream Basket Pisa",casa:false,luogo:"Paladream Rosso",indirizzo:"Via Gioacchino Belli 1, Pisa (PI)",giornata:"1ª ritorno"},
+    {date:"2026-04-25",ora:"15:30",avversario:"A.S.D. Pall. Castelfranco Frog",casa:true,luogo:"Palazzetto Cerreto Guidi",indirizzo:"Via Ildebrandino, Cerreto Guidi (FI)",giornata:"2ª ritorno"},
+    {date:"2026-05-03",ora:"11:00",avversario:"B.N.V. Juve Pontedera",casa:false,luogo:"Pal.to Zoli",indirizzo:"Via Costituzione, Pontedera (PI)",giornata:"3ª ritorno"},
+    {date:"2026-05-10",ora:"18:00",avversario:"A.S.Dil. C.S. Etrusca Basket",casa:true,luogo:"Palazzetto Cerreto Guidi",indirizzo:"Via Ildebrandino, Cerreto Guidi (FI)",giornata:"4ª ritorno"},
+    {date:"2026-05-17",ora:"15:00",avversario:"Basket San Casciano",casa:false,luogo:"Palestra Comunale",indirizzo:"Via Montopolo, San Casciano in Val di Pesa (FI)",giornata:"5ª ritorno"},
+  ];
+  function getArrivoOra(ora){const[h,m]=ora.split(":").map(Number);const tot=h*60+m-45;return`${String(Math.floor(tot/60)).padStart(2,"0")}:${String(tot%60).padStart(2,"0")}`;}
+  function fmtDate(d){const dt=new Date(d+"T12:00:00");return dt.toLocaleDateString("it-IT",{weekday:"long",day:"numeric",month:"long"});}
+  const today=new Date().toISOString().split("T")[0];
+  return(
+    <div>
+      <div style={{fontSize:11,color:"rgba(255,255,255,0.28)",marginBottom:14,lineHeight:1.6}}>
+        Cerreto Guidi — Under 14 Maschile Regionale 2a Fase C. Primavera
+      </div>
+      {PARTITE.map(p=>{
+        const isPast=p.date<today;const isToday2=p.date===today;
+        return(
+          <div key={p.date} style={{marginBottom:12,background:isToday2?"rgba(255,130,0,0.08)":isPast?"rgba(255,255,255,0.015)":"rgba(255,255,255,0.03)",border:"1px solid "+(isToday2?"rgba(255,130,0,0.35)":isPast?"rgba(255,255,255,0.04)":"rgba(255,255,255,0.08)"),borderRadius:14,padding:"13px 14px",opacity:isPast?0.55:1}}>
+            <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:8}}>
+              <div>
+                <div style={{fontSize:10,color:isToday2?"#ff8c00":"rgba(255,255,255,0.35)",fontWeight:700,letterSpacing:.5,textTransform:"uppercase",marginBottom:2}}>{p.giornata}{isToday2?" · OGGI 🏆":""}</div>
+                <div style={{fontSize:13,fontWeight:700,color:isPast?"rgba(255,255,255,0.4)":"rgba(255,255,255,0.9)",textTransform:"capitalize"}}>{fmtDate(p.date)}</div>
+              </div>
+              <span style={{fontSize:11,fontWeight:700,padding:"3px 10px",borderRadius:8,background:p.casa?"rgba(0,220,130,0.12)":"rgba(0,140,255,0.12)",color:p.casa?"#00da78":"#4db8ff",border:"1px solid "+(p.casa?"rgba(0,220,130,0.25)":"rgba(0,140,255,0.25)")}}>
+                {p.casa?"🏠 Casa":"✈️ Trasferta"}
+              </span>
+            </div>
+            <div style={{fontSize:14,fontWeight:700,color:"rgba(255,255,255,0.85)",marginBottom:10}}>vs {p.avversario}</div>
+            <div style={{display:"flex",flexDirection:"column",gap:5}}>
+              <div style={{display:"flex",alignItems:"center",gap:8}}>
+                <div style={{width:28,height:28,borderRadius:8,background:"rgba(255,100,0,0.12)",border:"1px solid rgba(255,100,0,0.2)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:13,flexShrink:0}}>⏰</div>
+                <div>
+                  <div style={{fontSize:10,color:"rgba(255,255,255,0.3)",fontWeight:600}}>PALLA A DUE</div>
+                  <div style={{fontSize:14,fontWeight:700,color:"#ff8c00",fontFamily:"'JetBrains Mono'"}}>{p.ora}</div>
+                </div>
+                <div style={{width:1,height:30,background:"rgba(255,255,255,0.07)",margin:"0 4px"}}/>
+                <div>
+                  <div style={{fontSize:10,color:"rgba(255,255,255,0.3)",fontWeight:600}}>ESSERE LÌ ALLE</div>
+                  <div style={{fontSize:14,fontWeight:700,color:"#ffcc00",fontFamily:"'JetBrains Mono'"}}>{getArrivoOra(p.ora)}</div>
+                </div>
+                <div style={{fontSize:10,color:"rgba(255,255,255,0.2)",marginLeft:2}}>(45 min prima)</div>
+              </div>
+              <div style={{display:"flex",alignItems:"flex-start",gap:8,marginTop:2}}>
+                <div style={{width:28,height:28,borderRadius:8,background:"rgba(0,140,255,0.1)",border:"1px solid rgba(0,140,255,0.2)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:13,flexShrink:0}}>📍</div>
+                <div>
+                  <div style={{fontSize:10,color:"rgba(255,255,255,0.3)",fontWeight:600}}>{p.luogo.toUpperCase()}</div>
+                  <div style={{fontSize:12,color:"rgba(255,255,255,0.55)",marginTop:1}}>{p.indirizzo}</div>
+                </div>
+              </div>
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function BackupRestore(){
+  const [mode,setMode]=useState(null); // null | "export" | "import"
+  const [exportText,setExportText]=useState("");
+  const [importText,setImportText]=useState("");
+  const [msg,setMsg]=useState(null);
+
+  function doExport(){
+    const keys={};
+    for(let i=0;i<localStorage.length;i++){
+      const k=localStorage.key(i);
+      if(k&&k.startsWith("enea_")){try{keys[k]=JSON.parse(localStorage.getItem(k));}catch{keys[k]=localStorage.getItem(k);}}
+    }
+    setExportText(JSON.stringify(keys,null,2));
+    setMode("export");
+    setMsg(null);
+  }
+
+  function copyExport(){
+    if(navigator.clipboard){navigator.clipboard.writeText(exportText).then(()=>setMsg({ok:true,text:"✓ Testo copiato! Incollalo in un file .txt o Notes."})).catch(()=>setMsg({ok:false,text:"⚠ Copia manuale: seleziona tutto il testo qui sopra."}));}
+    else{setMsg({ok:false,text:"⚠ Seleziona tutto il testo e copialo manualmente."});}
+  }
+
+  function doImport(){
+    try{
+      const data=JSON.parse(importText.trim());
+      if(typeof data!=="object"||Array.isArray(data))throw new Error();
+      let count=0;
+      Object.entries(data).forEach(([k,v])=>{try{localStorage.setItem(k,JSON.stringify(v));count++;}catch{}});
+      if(count===0)throw new Error();
+      setMsg({ok:true,text:`✓ ${count} voci ripristinate! Premi RICARICA.`,reload:true});
+    }catch{
+      setMsg({ok:false,text:"⚠ Testo non valido. Assicurati di incollare tutto il backup."});
+    }
+  }
+
+  const tabStyle=(active)=>({flex:1,padding:"10px 0",borderRadius:10,border:"1px solid "+(active?"rgba(255,77,0,0.35)":"rgba(255,255,255,0.08)"),background:active?"rgba(255,77,0,0.12)":"rgba(255,255,255,0.03)",color:active?"#ff6a20":"rgba(255,255,255,0.4)",fontSize:13,fontWeight:700,cursor:"pointer"});
+
+  return(
+    <div>
+      <div style={{fontSize:11,color:"rgba(255,255,255,0.28)",marginBottom:16,lineHeight:1.7}}>
+        Esporta i tuoi dati come testo, salvalo dove vuoi. Per ripristinarli incollalo qui.
+      </div>
+      <div style={{display:"flex",gap:8,marginBottom:16}}>
+        <button onClick={doExport} style={tabStyle(mode==="export")}>📤 Esporta</button>
+        <button onClick={()=>{setMode("import");setMsg(null);}} style={tabStyle(mode==="import")}>📥 Importa</button>
+      </div>
+
+      {mode==="export"&&exportText&&(
+        <div>
+          <div style={{fontSize:10,color:"rgba(255,255,255,0.28)",marginBottom:6,fontWeight:600}}>COPIA TUTTO QUESTO TESTO E SALVALO:</div>
+          <textarea readOnly rows={8} value={exportText} onClick={e=>e.target.select()} style={{fontSize:9,lineHeight:1.4,color:"rgba(255,255,255,0.55)",background:"rgba(0,0,0,0.3)"}}/>
+          <button onClick={copyExport} className="btn-p" style={{width:"100%",marginTop:8,padding:"12px",fontWeight:700}}>📋 COPIA TUTTO ✓</button>
+        </div>
+      )}
+
+      {mode==="import"&&(
+        <div>
+          <div style={{fontSize:10,color:"rgba(255,255,255,0.28)",marginBottom:6,fontWeight:600}}>INCOLLA QUI IL TUO BACKUP:</div>
+          <textarea rows={8} value={importText} onChange={e=>setImportText(e.target.value)} placeholder='Incolla qui il testo del backup...' style={{fontSize:9,lineHeight:1.4}}/>
+          <button onClick={doImport} className="btn-p" style={{width:"100%",marginTop:8,padding:"12px",fontWeight:700}}>RIPRISTINA ✓</button>
+        </div>
+      )}
+
+      {msg&&(
+        <div style={{marginTop:12,padding:"12px 15px",borderRadius:12,background:msg.ok?"rgba(0,218,120,0.08)":"rgba(255,70,0,0.08)",border:`1px solid ${msg.ok?"rgba(0,218,120,0.22)":"rgba(255,70,0,0.22)"}`,color:msg.ok?"#00da78":"#ff6520",fontSize:13,fontWeight:600,lineHeight:1.5}}>
+          {msg.text}
+          {msg.reload&&<button onClick={()=>window.location.reload()} style={{display:"block",marginTop:10,width:"100%",padding:"11px",borderRadius:10,border:"none",background:"#00da78",color:"#000",fontWeight:800,cursor:"pointer",fontSize:14}}>RICARICA ORA ↺</button>}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function HistoryEditor({dailyLogs,setDailyLogs,completedDays,setCompletedDays,setStreak,customSchedule}){
+  const today=new Date();
+  const [selDate,setSelDate]=useState(null);
+  const [draft,setDraft]=useState(null);
+
+  // Generate last 30 days (excluding today)
+  const days=Array.from({length:30},(_,i)=>{
+    const d=new Date(today);d.setDate(d.getDate()-(i+1));
+    return d.toISOString().split("T")[0];
+  });
+
+  function openDay(date){
+    const log=dailyLogs[date]||{foodStars:0,trainingDone:false,taskPct:0};
+    setDraft({...log,foodStars:log.foodStars||0,trainingDone:!!log.trainingDone,taskPct:log.taskPct||0});
+    setSelDate(date);
+  }
+
+  function saveDay(){
+    const starVal=draft.foodStars||0;
+    const mstars={};
+    if(starVal>0){
+      ["Colazione","Spuntino","Pranzo","Merenda","Cena"].forEach(m=>{mstars[m]=starVal;});
+    }
+    try{localStorage.setItem("enea_mstars_"+selDate,JSON.stringify(mstars));}catch{}
+
+    // Fix: salva anche la chiave tdone_ usata dalla tab Training
+    try{localStorage.setItem("enea_tdone_"+selDate,JSON.stringify(!!draft.trainingDone));}catch{} // fix: enea_ prefix to match load() helper
+
+    // Un giorno è "completato" se training done oppure task>50% oppure cibo>50%
+    const dayDone=draft.trainingDone||(draft.taskPct>=50)||(draft.foodStars>=3);
+
+    const newCompletedDays={...completedDays,[selDate]:dayDone?true:undefined};
+    if(!dayDone)delete newCompletedDays[selDate];
+    setCompletedDays(newCompletedDays);
+    try{localStorage.setItem("enea_cdays",JSON.stringify(newCompletedDays));}catch{}
+
+    // Ricalcola streak: parte da ieri (oggi potrebbe non essere ancora completo)
+    let s=0;
+    const todayKey=new Date().toISOString().split("T")[0];
+    const cur=new Date();cur.setDate(cur.getDate()-1);
+    while(true){
+      const dk=cur.toISOString().split("T")[0];
+      if(newCompletedDays[dk]){s++;cur.setDate(cur.getDate()-1);}
+      else break;
+    }
+    if(newCompletedDays[todayKey])s++;
+    setStreak(s);
+    try{localStorage.setItem("enea_streak",JSON.stringify(s));}catch{}
+
+    setDailyLogs(prev=>{
+      const next={...prev,[selDate]:{...prev[selDate],...draft}};
+      try{localStorage.setItem("enea_dlogs",JSON.stringify(next));}catch{}
+      return next;
+    });
+    setSelDate(null);setDraft(null);
+  }
+
+  function fmtDate(dateStr){
+    const d=new Date(dateStr+"T12:00:00");
+    return d.toLocaleDateString("it-IT",{weekday:"short",day:"numeric",month:"short"});
+  }
+
+  function scoreColor(v){if(v>=80)return"#00da78";if(v>=50)return"#ffcc00";return"#ff4000";}
+
+  if(selDate&&draft){
+    const foodPct=Math.round((draft.foodStars/5)*100);
+    return(
+      <div>
+        <button onClick={()=>{setSelDate(null);setDraft(null);}} style={{background:"rgba(255,255,255,0.05)",border:"1px solid rgba(255,255,255,0.1)",borderRadius:9,color:"rgba(255,255,255,0.5)",fontSize:12,padding:"6px 12px",cursor:"pointer",marginBottom:14}}>← Indietro</button>
+        <div style={{fontSize:13,fontWeight:700,color:"rgba(255,255,255,0.9)",marginBottom:14,textTransform:"capitalize"}}>{fmtDate(selDate)}</div>
+
+        <div style={{marginBottom:14}}>
+          <div style={{fontSize:10,color:"rgba(255,255,255,0.35)",fontWeight:600,letterSpacing:.5,marginBottom:8}}>🍽️ CIBO — {foodPct}%</div>
+          <div style={{display:"flex",gap:6,alignItems:"center"}}>
+            {[1,2,3,4,5].map(star=>(
+              <button key={star} onClick={()=>setDraft(p=>({...p,foodStars:star}))} style={{flex:1,padding:"10px 0",borderRadius:9,border:`1px solid ${draft.foodStars>=star?"rgba(255,204,0,0.4)":"rgba(255,255,255,0.07)"}`,background:draft.foodStars>=star?"rgba(255,204,0,0.12)":"rgba(255,255,255,0.03)",fontSize:18,cursor:"pointer"}}>★</button>
+            ))}
+          </div>
+          <div style={{fontSize:10,color:"rgba(255,255,255,0.25)",marginTop:5,textAlign:"center"}}>Tocca per impostare le stelle ({draft.foodStars}/5)</div>
+        </div>
+
+        <div style={{marginBottom:14}}>{(()=>{
+          const dow2=(new Date(selDate+"T12:00:00").getDay()+6)%7;
+          const _eff=customSchedule||SCHEDULE;
+          const sched2=_eff[dow2]||SCHEDULE[dow2]||{};
+          const isRest=sched2.type==="rest";
+          return(<>
+            <div style={{fontSize:10,color:"rgba(255,255,255,0.35)",fontWeight:600,letterSpacing:.5,marginBottom:8}}>💪 TRAINING {isRest&&<span style={{color:"rgba(255,255,255,0.2)",fontWeight:400}}>— giorno di riposo</span>}</div>
+            {isRest
+              ?<div style={{padding:"10px 14px",borderRadius:10,border:"1px solid rgba(255,255,255,0.06)",background:"rgba(255,255,255,0.02)",color:"rgba(255,255,255,0.2)",fontSize:12,textAlign:"center"}}>😴 Riposo — non conta nella media</div>
+              :<button onClick={()=>setDraft(p=>({...p,trainingDone:!p.trainingDone}))} style={{width:"100%",padding:"11px",borderRadius:10,border:`1px solid ${draft.trainingDone?"rgba(0,201,126,0.35)":"rgba(255,255,255,0.08)"}`,background:draft.trainingDone?"rgba(0,201,126,0.12)":"rgba(255,255,255,0.03)",color:draft.trainingDone?"#00da78":"rgba(255,255,255,0.35)",fontSize:13,fontWeight:600,cursor:"pointer"}}>
+                {draft.trainingDone?"✓ Completato":"✕ Non completato"}
+              </button>
+            }
+          </>);
+        })()}</div>
+
+        <div style={{marginBottom:16}}>
+          <div style={{fontSize:10,color:"rgba(255,255,255,0.35)",fontWeight:600,letterSpacing:.5,marginBottom:8}}>✓ TASK — {draft.taskPct}%</div>
+          <input type="range" min={0} max={100} step={5} value={draft.taskPct} onChange={e=>setDraft(p=>({...p,taskPct:parseInt(e.target.value)}))} style={{width:"100%",accentColor:"#ff4000"}}/>
+          <div style={{display:"flex",justifyContent:"space-between",fontSize:10,color:"rgba(255,255,255,0.2)",marginTop:3}}><span>0%</span><span style={{color:scoreColor(draft.taskPct),fontWeight:600}}>{draft.taskPct}%</span><span>100%</span></div>
+        </div>
+
+        <button onClick={saveDay} className="btn-p" style={{width:"100%",padding:"12px",fontSize:14,fontWeight:700}}>SALVA GIORNO ✓</button>
+      </div>
+    );
+  }
+
+  return(
+    <div>
+      <div style={{fontSize:11,color:"rgba(255,255,255,0.3)",marginBottom:12}}>Tocca un giorno per modificare cibo, training e task.</div>
+      {days.map(date=>{
+        const log=dailyLogs[date];
+        const hasData=log&&(log.foodStars>0||log.trainingDone||log.taskPct>0);
+        const foodPct=log?Math.round(((log.foodStars||0)/5)*100):null;
+        const trainOk=log?.trainingDone;
+        const taskP=log?.taskPct||null;
+        return(
+          <button key={date} onClick={()=>openDay(date)} style={{width:"100%",background:"rgba(255,255,255,0.03)",border:"1px solid rgba(255,255,255,0.07)",borderRadius:11,padding:"11px 13px",display:"flex",alignItems:"center",gap:10,cursor:"pointer",marginBottom:6,textAlign:"left"}}>
+            <div style={{flex:1}}>
+              <div style={{fontSize:13,fontWeight:600,color:"rgba(255,255,255,0.8)",textTransform:"capitalize"}}>{fmtDate(date)}</div>
+              {!hasData&&<div style={{fontSize:11,color:"rgba(255,255,255,0.2)",marginTop:1}}>Nessun dato</div>}
+            </div>
+            {hasData&&<div style={{display:"flex",gap:6,alignItems:"center"}}>
+              <div style={{textAlign:"center"}}>
+                <div style={{fontSize:10,color:"rgba(255,255,255,0.25)"}}>🍽️</div>
+                <div style={{fontSize:11,fontWeight:700,color:scoreColor(foodPct)}}>{foodPct}%</div>
+              </div>
+              <div style={{textAlign:"center"}}>
+                <div style={{fontSize:10,color:"rgba(255,255,255,0.25)"}}>💪</div>
+                <div style={{fontSize:11,fontWeight:700,color:trainOk?"#00da78":"#ff4000"}}>{trainOk?"✓":"✕"}</div>
+              </div>
+              <div style={{textAlign:"center"}}>
+                <div style={{fontSize:10,color:"rgba(255,255,255,0.25)"}}>✓</div>
+                <div style={{fontSize:11,fontWeight:700,color:scoreColor(taskP)}}>{taskP}%</div>
+              </div>
+            </div>}
+            <span style={{color:"rgba(255,255,255,0.2)",fontSize:13}}>›</span>
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+function SettingsTab({profile,setProfile,customSchedule,setCustomSchedule,customMealPlan,setCustomMealPlan,tasks,setTasks,goals,setGoals,onClose,dailyLogs,setDailyLogs,completedDays,setCompletedDays,setStreak}){
+  const [section,setSection]=useState(null);
+  const [draft,setDraft]=useState({...profile});
+  const [schedDraft,setSchedDraft]=useState(()=>JSON.parse(JSON.stringify(customSchedule)));
+  const [mealDraft,setMealDraft]=useState(()=>JSON.parse(JSON.stringify(customMealPlan)));
+  const [taskDraft,setTaskDraft]=useState(()=>tasks.map(t=>({...t})));
+  const [goalDraft,setGoalDraft]=useState(()=>goals.map(g=>({...g})));
+
+  function saveAll(){setProfile(draft);setCustomSchedule(schedDraft);setCustomMealPlan(mealDraft);setTasks(taskDraft);setGoals(goalDraft);onClose();}
+
+  const SECS=[
+    {id:"profile",  icon:"👤",label:"Dati profilo"},
+    {id:"training", icon:"💪",label:"Piano allenamento"},
+    {id:"nutrition",icon:"🍽️",label:"Piano alimentare"},
+    {id:"tasks",    icon:"✓", label:"Task quotidiane"},
+    {id:"goals",    icon:"🎯",label:"Obiettivi"},
+    {id:"history",  icon:"📅",label:"Modifica giorni passati"},
+    {id:"partite",  icon:"🏀",label:"Calendario Partite"},
+    {id:"backup",   icon:"💾",label:"Backup / Ripristino dati"},
+  ];
+
+  return(<>
+    <div className="card" style={{background:"rgba(255,77,0,0.06)",borderColor:"rgba(255,77,0,0.2)",marginBottom:10}}>
+      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+        <div><div className="H" style={{fontSize:20,letterSpacing:.3}}>Impostazioni</div><div style={{fontSize:11,color:"rgba(255,255,255,0.3)",marginTop:2}}>Modifica e salva tutto</div></div>
+        <button onClick={saveAll} className="btn-p" style={{padding:"8px 16px",fontSize:13}}>SALVA</button>
+      </div>
+    </div>
+
+    {SECS.map(s=>(
+      <div key={s.id}>
+        <button onClick={()=>setSection(section===s.id?null:s.id)} style={{width:"100%",background:"rgba(255,255,255,0.038)",border:"1px solid "+(section===s.id?"rgba(255,77,0,0.3)":"rgba(255,255,255,0.065)"),borderRadius:14,padding:"13px 15px",display:"flex",alignItems:"center",gap:12,cursor:"pointer",marginBottom:section===s.id?0:8,borderBottomLeftRadius:section===s.id?0:14,borderBottomRightRadius:section===s.id?0:14}}>
+          <span style={{fontSize:20}}>{s.icon}</span>
+          <span style={{flex:1,fontSize:14,fontWeight:600,color:"rgba(255,255,255,0.8)",textAlign:"left"}}>{s.label}</span>
+          <span style={{color:"rgba(255,255,255,0.3)",fontSize:13,transform:section===s.id?"rotate(180deg)":"none",transition:"transform .2s",display:"inline-block"}}>▾</span>
+        </button>
+        {section===s.id&&(
+          <div style={{background:"rgba(255,255,255,0.025)",border:"1px solid rgba(255,77,0,0.2)",borderTop:"none",borderBottomLeftRadius:14,borderBottomRightRadius:14,padding:"14px",marginBottom:8}}>
+            {s.id==="profile"&&(
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:9}}>
+                {[{l:"Nome",k:"name",t:"text"},{l:"Eta",k:"age",t:"number"},{l:"Peso kg",k:"weight",t:"number"},{l:"Altezza cm",k:"height",t:"number"}].map(f=>(
+                  <div key={f.k}><div style={{fontSize:10,color:"rgba(255,255,255,0.3)",marginBottom:4,fontWeight:600}}>{f.l.toUpperCase()}</div><input type={f.t} className="inp" value={draft[f.k]} onChange={e=>setDraft(p=>({...p,[f.k]:f.t==="number"?parseFloat(e.target.value)||0:e.target.value}))}/></div>
+                ))}
+              </div>
+            )}
+            {s.id==="training"&&(
+              <div>
+                {Object.entries(schedDraft).map(([di,day])=>(
+                  <div key={di} style={{marginBottom:20,paddingBottom:14,borderBottom:"1px solid rgba(255,255,255,0.05)"}}>
+                    <div style={{fontSize:11,color:"#ff6a20",fontWeight:700,letterSpacing:.5,marginBottom:8}}>{DAYS_SHORT[di]}</div>
+                    {/* Label giorno */}
+                    <div style={{fontSize:10,color:"rgba(255,255,255,0.3)",marginBottom:3,fontWeight:600}}>NOME DEL GIORNO</div>
+                    <input className="inp" value={day.label||""} onChange={e=>{const s=JSON.parse(JSON.stringify(schedDraft));s[di].label=e.target.value;setSchedDraft(s);}} style={{marginBottom:8,fontSize:15,padding:"7px 10px"}} placeholder={DAYS_SHORT[di]}/>
+                    <div style={{display:"flex",gap:6,marginBottom:10}}>
+                      <div style={{flex:2}}>
+                        <div style={{fontSize:10,color:"rgba(255,255,255,0.3)",marginBottom:3,fontWeight:600}}>TIPO</div>
+                        <select className="inp" value={day.type||"custom"} onChange={e=>{const s=JSON.parse(JSON.stringify(schedDraft));s[di].type=e.target.value;setSchedDraft(s);}} style={{fontSize:14,padding:"7px 10px"}}>
+                          <option value="custom">💪 Allenamento</option>
+                          <option value="strength">🏋️ Forza</option>
+                          <option value="hiit">⚡ Esplosività</option>
+                          <option value="practice">🏀 Squadra</option>
+                          <option value="game">🏆 Game Day</option>
+                          <option value="rest">😴 Riposo</option>
+                        </select>
+                      </div>
+                      <div style={{flex:1}}>
+                        <div style={{fontSize:10,color:"rgba(255,255,255,0.3)",marginBottom:3,fontWeight:600}}>ICONA</div>
+                        <input className="inp" value={day.icon||""} onChange={e=>{const s=JSON.parse(JSON.stringify(schedDraft));s[di].icon=e.target.value;setSchedDraft(s);}} style={{fontSize:18,padding:"7px 0",textAlign:"center"}} placeholder="💪"/>
+                      </div>
+                    </div>
+                    {/* Esercizi forza */}
+                    <div style={{fontSize:10,color:"rgba(255,255,255,0.3)",marginBottom:4,fontWeight:600,letterSpacing:.3}}>💪 ESERCIZI (forza)</div>
+                    {(day.exercises||[]).map((ex,i)=>(
+                      <div key={i} style={{display:"flex",gap:5,marginBottom:5}}>
+                        <input className="inp" value={ex.icon||"💪"} onChange={e=>{const s=JSON.parse(JSON.stringify(schedDraft));s[di].exercises[i].icon=e.target.value;setSchedDraft(s);}} style={{width:44,fontSize:16,padding:"7px 0",textAlign:"center"}} placeholder="💪"/>
+                        <input className="inp" value={ex.name} onChange={e=>{const s=JSON.parse(JSON.stringify(schedDraft));s[di].exercises[i].name=e.target.value;setSchedDraft(s);}} style={{flex:2,fontSize:15,padding:"7px 10px"}} placeholder="Esercizio"/>
+                        <input className="inp" value={ex.sets} onChange={e=>{const s=JSON.parse(JSON.stringify(schedDraft));s[di].exercises[i].sets=e.target.value;setSchedDraft(s);}} style={{flex:1,fontSize:15,padding:"7px 10px"}} placeholder="3x10"/>
+                        <button onClick={()=>{const s=JSON.parse(JSON.stringify(schedDraft));s[di].exercises.splice(i,1);setSchedDraft(s);}} style={{background:"rgba(255,0,0,0.08)",border:"1px solid rgba(255,0,0,0.15)",borderRadius:8,color:"#ff6a20",fontSize:13,padding:"6px 8px",cursor:"pointer"}}>✕</button>
+                      </div>
+                    ))}
+                    <button onClick={()=>{const s=JSON.parse(JSON.stringify(schedDraft));if(!s[di].exercises)s[di].exercises=[];s[di].exercises.push({name:"",sets:"",icon:"💪"});setSchedDraft(s);}} style={{background:"rgba(255,255,255,0.04)",border:"1px dashed rgba(255,255,255,0.1)",borderRadius:8,color:"rgba(255,255,255,0.3)",fontSize:12,padding:"6px 12px",cursor:"pointer",width:"100%",marginTop:2,marginBottom:10}}>+ Esercizio</button>
+                    {/* Skills basket */}
+                    <div style={{fontSize:10,color:"rgba(255,130,0,0.7)",marginBottom:4,fontWeight:600,letterSpacing:.3}}>🏀 BASKET (skills)</div>
+                    {(day.skills||[]).map((sk,i)=>(
+                      <div key={i} style={{display:"flex",gap:5,marginBottom:5}}>
+                        <input className="inp" value={sk} onChange={e=>{const s=JSON.parse(JSON.stringify(schedDraft));s[di].skills[i]=e.target.value;setSchedDraft(s);}} style={{flex:1,fontSize:14,padding:"7px 10px"}} placeholder="Es. Handling 10'…"/>
+                        <button onClick={()=>{const s=JSON.parse(JSON.stringify(schedDraft));s[di].skills.splice(i,1);setSchedDraft(s);}} style={{background:"rgba(255,0,0,0.08)",border:"1px solid rgba(255,0,0,0.15)",borderRadius:8,color:"#ff6a20",fontSize:13,padding:"6px 8px",cursor:"pointer"}}>✕</button>
+                      </div>
+                    ))}
+                    <button onClick={()=>{const s=JSON.parse(JSON.stringify(schedDraft));if(!s[di].skills)s[di].skills=[];s[di].skills.push("");setSchedDraft(s);}} style={{background:"rgba(255,100,0,0.05)",border:"1px dashed rgba(255,100,0,0.2)",borderRadius:8,color:"rgba(255,130,0,0.6)",fontSize:12,padding:"6px 12px",cursor:"pointer",width:"100%",marginTop:2,marginBottom:10}}>+ Skill basket</button>
+                    {/* Nota */}
+                    <div style={{fontSize:10,color:"rgba(255,255,255,0.3)",marginBottom:3,fontWeight:600}}>NOTA</div>
+                    <textarea rows={2} value={day.note||""} onChange={e=>{const s=JSON.parse(JSON.stringify(schedDraft));s[di].note=e.target.value;setSchedDraft(s);}} style={{fontSize:13,padding:"7px 10px"}} placeholder="Es. 60'' riposo tra i set…"/>
+                  </div>
+                ))}
+              </div>
+            )}
+            {s.id==="nutrition"&&(
+              <div>
+                {Object.entries(mealDraft).map(([meal,plan])=>(
+                  <div key={meal} style={{marginBottom:14}}>
+                    <div style={{fontSize:11,color:"#ff6a20",fontWeight:700,letterSpacing:.5,marginBottom:6}}>{meal.toUpperCase()}</div>
+                    <input className="inp" value={plan.target} onChange={e=>{const m={...mealDraft,[meal]:{...mealDraft[meal],target:e.target.value}};setMealDraft(m);}} style={{marginBottom:7,fontSize:16}}/>
+                    {plan.examples.map((ex,i)=>(
+                      <div key={i} style={{display:"flex",gap:6,marginBottom:5}}>
+                        <input className="inp" value={ex} onChange={e=>{const m=JSON.parse(JSON.stringify(mealDraft));m[meal].examples[i]=e.target.value;setMealDraft(m);}} style={{flex:1,fontSize:16,padding:"7px 10px"}}/>
+                        <button onClick={()=>{const m=JSON.parse(JSON.stringify(mealDraft));m[meal].examples.splice(i,1);setMealDraft(m);}} style={{background:"rgba(255,0,0,0.08)",border:"1px solid rgba(255,0,0,0.15)",borderRadius:8,color:"#ff6a20",fontSize:13,padding:"6px 8px",cursor:"pointer"}}>✕</button>
+                      </div>
+                    ))}
+                    <button onClick={()=>{const m=JSON.parse(JSON.stringify(mealDraft));m[meal].examples.push("");setMealDraft(m);}} style={{background:"rgba(255,255,255,0.04)",border:"1px dashed rgba(255,255,255,0.1)",borderRadius:8,color:"rgba(255,255,255,0.3)",fontSize:12,padding:"6px 12px",cursor:"pointer",width:"100%",marginTop:2,marginBottom:6}}>+ Esempio</button>
+                  </div>
+                ))}
+              </div>
+            )}
+            {s.id==="tasks"&&(
+              <div>
+                {taskDraft.map((t,i)=>(
+                  <div key={t.id} style={{marginBottom:9,padding:"10px",background:"rgba(255,255,255,0.03)",borderRadius:11,border:"1px solid rgba(255,255,255,0.07)"}}>
+                    <div style={{display:"flex",gap:6,marginBottom:6}}>
+                      <input className="inp" value={t.text} onChange={e=>{const d=[...taskDraft];d[i]={...d[i],text:e.target.value};setTaskDraft(d);}} style={{flex:1,fontSize:16}} placeholder="Nome task"/>
+                      <button onClick={()=>setTaskDraft(p=>p.filter((_,j)=>j!==i))} style={{background:"rgba(255,0,0,0.08)",border:"1px solid rgba(255,0,0,0.15)",borderRadius:8,color:"#ff6a20",fontSize:13,padding:"6px 8px",cursor:"pointer"}}>✕</button>
+                    </div>
+                    <input className="inp" value={t.subtitle||""} onChange={e=>{const d=[...taskDraft];d[i]={...d[i],subtitle:e.target.value};setTaskDraft(d);}} style={{marginBottom:7,fontSize:16}} placeholder="Sottotitolo opzionale"/>
+                    <div style={{display:"flex",gap:3,marginBottom:4}}>
+                      {DAYS_LETTER.map((dl,j)=>{const days=t.days||[0,1,2,3,4,5,6];const active=days.includes(j);return <button key={j} onClick={()=>{const nd=active?days.filter(x=>x!==j):[...days,j].sort();const dr=[...taskDraft];dr[i]={...dr[i],days:nd};setTaskDraft(dr);}} style={{flex:1,padding:"5px 0",borderRadius:7,border:"1px solid "+(active?"rgba(255,77,0,0.35)":"rgba(255,255,255,0.08)"),background:active?"rgba(255,77,0,0.13)":"rgba(255,255,255,0.04)",color:active?"#ff6a20":"rgba(255,255,255,0.25)",fontSize:11,fontWeight:600,cursor:"pointer"}}>{dl}</button>;})}
+                    </div>
+                    {(()=>{const days=t.days||[0,1,2,3,4,5,6];const active=days.includes(7);return <button onClick={()=>{const nd=active?days.filter(x=>x!==7):[...days,7].sort();const dr=[...taskDraft];dr[i]={...dr[i],days:nd};setTaskDraft(dr);}} style={{width:"100%",padding:"5px 0",borderRadius:7,border:"1px solid "+(active?"rgba(255,140,0,0.4)":"rgba(255,255,255,0.08)"),background:active?"rgba(255,140,0,0.15)":"rgba(255,255,255,0.04)",color:active?"#ff8c00":"rgba(255,255,255,0.25)",fontSize:11,fontWeight:700,cursor:"pointer"}}>🏀 Solo Game Day</button>;})()}
+                  </div>
+                ))}
+                <button onClick={()=>setTaskDraft(p=>[...p,{id:Date.now(),text:"",subtitle:"",days:[0,1,2,3,4,5,6]}])} style={{background:"rgba(255,255,255,0.04)",border:"1px dashed rgba(255,255,255,0.1)",borderRadius:10,color:"rgba(255,255,255,0.3)",fontSize:13,padding:"9px",cursor:"pointer",width:"100%"}}>+ Nuova task</button>
+              </div>
+            )}
+            {s.id==="goals"&&(
+              <div>
+                {goalDraft.map((g,i)=>(
+                  <div key={g.id} style={{display:"flex",gap:7,marginBottom:7,alignItems:"center"}}>
+                    <div style={{width:7,height:7,borderRadius:"50%",background:g.done?"#00da78":"#ff6a20",flexShrink:0}}/>
+                    <input className="inp" value={g.text} onChange={e=>{const d=[...goalDraft];d[i]={...d[i],text:e.target.value};setGoalDraft(d);}} style={{flex:1,fontSize:16}}/>
+                    <button onClick={()=>setGoalDraft(p=>p.filter((_,j)=>j!==i))} style={{background:"rgba(255,0,0,0.08)",border:"1px solid rgba(255,0,0,0.15)",borderRadius:8,color:"#ff6a20",fontSize:13,padding:"6px 8px",cursor:"pointer"}}>✕</button>
+                  </div>
+                ))}
+              </div>
+            )}
+            {s.id==="history"&&<HistoryEditor dailyLogs={dailyLogs} setDailyLogs={setDailyLogs} completedDays={completedDays} setCompletedDays={setCompletedDays} setStreak={setStreak} customSchedule={customSchedule}/>}
+            {s.id==="partite"&&<PartiteCalendar/>}
+            {s.id==="backup"&&<BackupRestore/>}
+          </div>
+        )}
+      </div>
+    ))}
+    <div style={{height:10}}/>
+    <button onClick={saveAll} className="btn-p" style={{width:"100%",padding:"13px",fontSize:15,fontWeight:700}}>SALVA TUTTO E CHIUDI ✓</button>
+    <div style={{height:30}}/>
+  </>);
+}
+
+
+
+function HomeTab({profile,setProfile,
+  dailyLogs,td,wd,dow,sched,completedDays,trainingDone,compTasks,todayTasks,taskDone,
+  note,setNote,water,weekComp,compGoals,goals,streak,bmi,foodStars,taskPct,compEx,compSk,total,skippedEx,skippedMeals,skippedTasks2,exercises,skills}){
+  const [editP,setEditP]=useState(false);
+  const [draft,setDraft]=useState(profile);
+  const quote=QUOTES[new Date().getDate()%QUOTES.length];
+
+  function saveProfile(){setProfile(draft);setEditP(false);}
+
+  const [periodType,setPeriodType]=useState(0);
+  const [periodOffset,setPeriodOffset]=useState(0);
+
+  function getPeriodDates(){
+    const now=new Date();
+    if(periodType===0){const d=new Date(now);d.setDate(d.getDate()-periodOffset);return{dates:[d.toISOString().split("T")[0]],label:periodOffset===0?"Oggi":periodOffset===1?"Ieri":d.toLocaleDateString("it-IT",{day:"numeric",month:"short"})};}
+    if(periodType===1){const mon=new Date(now);mon.setDate(now.getDate()-((now.getDay()+6)%7)-periodOffset*7);const dates=Array.from({length:7},(_,i)=>{const x=new Date(mon);x.setDate(mon.getDate()+i);return x.toISOString().split("T")[0];});return{dates,label:periodOffset===0?"Questa settimana":periodOffset===1?"Settimana scorsa":periodOffset+" settimane fa"};}
+    if(periodType===2){const y=now.getFullYear();const m=now.getMonth()-periodOffset;const date=new Date(y,m,1);const yr=date.getFullYear();const mo=date.getMonth();const days=new Date(yr,mo+1,0).getDate();const dates=Array.from({length:days},(_,i)=>`${yr}-${String(mo+1).padStart(2,"0")}-${String(i+1).padStart(2,"0")}`).filter(d=>d<=td);const label=date.toLocaleDateString("it-IT",{month:"long",year:"numeric"});return{dates,label:label.charAt(0).toUpperCase()+label.slice(1)};}
+    return{dates:Object.keys(dailyLogs).filter(k=>k<=td),label:"Da sempre"};
+  }
+
+  const {dates:periodDates,label:periodLabel}=getPeriodDates();
+  const isToday=periodType===0&&periodOffset===0;
+  const canGoBack=periodType!==3;
+  const canGoForward=periodOffset>0&&periodType!==3;
+
+  function computeStats(){
+    const valid=periodDates.filter(d=>dailyLogs[d]);
+    if(!valid.length)return{food:null,training:null,task:null,count:0};
+    const foodDays=valid.filter(d=>{const sm=(dailyLogs[d].skippedMeals||[]);return sm.length<5;});
+    const trainDays=valid.filter(d=>{
+      const dow2=(new Date(d).getDay()+6)%7;
+      const _eff2=customSchedule||SCHEDULE;
+      const s2=_eff2[dow2]||SCHEDULE[dow2]||{exercises:[],skills:[],type:""};
+      if(s2.type==="rest")return false;
+      const se=(dailyLogs[d].skippedEx||[]);
+      const tot=(s2.exercises||[]).length+(s2.skills||[]).length;
+      if(tot===0)return true;
+      return se.length<tot;
+    });
+    const fs=foodDays.reduce((a,d)=>{
+      const sm=new Set(dailyLogs[d].skippedMeals||[]);
+      const vm=["Colazione","Spuntino","Pranzo","Merenda","Cena"].filter(m=>!sm.has(m));
+      const ms=load("mstars_"+d,{});const r=vm.filter(m=>ms[m]>0);
+      if(!r.length)return a;
+      return[a[0]+((r.reduce((s,m)=>s+(ms[m]||0),0)/r.length-1)/4),a[1]+1];
+    },[0,0]);
+    const tr=trainDays.filter(d=>dailyLogs[d].trainingDone).length;
+    const ta=valid.reduce((a,d)=>a+(dailyLogs[d].taskPct||0),0);
+    return{food:fs[1]>0?fs[0]/fs[1]:null,training:trainDays.length>0?tr/trainDays.length:null,task:valid.length>0?(ta/valid.length)/100:null,count:valid.length};
+  }
+
+  const stats=computeStats();
+  const allMealsSkipped=isToday&&skippedMeals.size>=5;
+  const foodPct=(()=>{
+    if(allMealsSkipped)return null;
+    if(isToday){const r=Object.values(load("mstars_"+td,{})).filter(v=>v>0);if(!r.length)return null;return(r.reduce((a,b)=>a+b,0)/r.length/5)*100;}
+    return stats.food!==null?stats.food*100:null;
+  })();
+  const exListH=sched.exercises||[];const skListH=sched.skills||[];
+  const exTotal=exListH.length+skListH.length;
+  const nonSkippedExTotal=exTotal-skippedEx.size;
+  const nonSkippedDone=exListH.filter(e=>exercises[e.name]&&!skippedEx.has(e.name)).length+skListH.filter(s=>skills[s]&&!skippedEx.has(s)).length;
+  const trainPct=isToday?(nonSkippedExTotal>0?(nonSkippedDone/nonSkippedExTotal)*100:(trainingDone?100:null)):stats.training!==null?stats.training*100:null;
+  const nonSkippedTasksDone=todayTasks.filter(t=>taskDone[t.id]&&!skippedTasks2.has(String(t.id))).length;
+  const nonSkippedTasksTotal=todayTasks.filter(t=>!skippedTasks2.has(String(t.id))).length;
+  const taskStatPct=isToday?(nonSkippedTasksTotal>0?(nonSkippedTasksDone/nonSkippedTasksTotal)*100:null):stats.task!==null?stats.task*100:null;
+  const oParts=[foodPct,trainPct,taskStatPct].filter(x=>x!==null);
+  const overallPct=oParts.length>0?oParts.reduce((a,b)=>a+b,0)/oParts.length:null;
+  const PTYPES=["Giorno","Settimana","Mese","Sempre"];
+  const nextGoal=goals.filter(g=>!g.done&&g.deadline).sort((a,b)=>new Date(a.deadline)-new Date(b.deadline))[0];
+  const nextDays=nextGoal?Math.ceil((new Date(nextGoal.deadline)-new Date())/864e5):null;
+  const last14=Array.from({length:14},(_,i)=>{const d=new Date();d.setDate(d.getDate()-(13-i));return{date:d.toISOString().split("T")[0],done:!!completedDays[d.toISOString().split("T")[0]]};});
+
+  return(<>
+    {/* ── PROFILO ─────────────────────────────────────────── */}
+    <div className="card co" style={{background:"linear-gradient(135deg,rgba(255,77,0,0.07),rgba(8,9,16,0.95))"}}>
+      {!editP?(
+        <div style={{display:"flex",alignItems:"center",gap:12}}>
+          <div style={{width:50,height:50,borderRadius:13,background:"linear-gradient(135deg,rgba(255,77,0,0.2),rgba(255,77,0,0.05))",border:"1.5px solid rgba(255,77,0,0.25)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:22,flexShrink:0}}>
+            {profile.name?profile.name[0].toUpperCase():"?"}
+          </div>
+          <div style={{flex:1}}>
+            <div className="H" style={{fontSize:20,letterSpacing:.5}}>{profile.name||"—"}</div>
+            <div style={{fontSize:12,color:"rgba(255,255,255,0.38)",marginTop:2}}>
+              {profile.weight>0?profile.weight+"kg":""}{profile.weight>0&&profile.height>0?" · ":""}{profile.height>0?profile.height+"cm":""}
+              {bmi!=="—"?<span style={{marginLeft:6,background:"rgba(255,77,0,0.12)",border:"1px solid rgba(255,77,0,0.2)",borderRadius:6,padding:"1px 6px",fontSize:11,color:"#ff6a20",fontWeight:600}}>BMI {bmi}</span>:null}
+            </div>
+            <div style={{marginTop:6}}>
+              <span className="pill pb" style={{fontFamily:"'JetBrains Mono'",letterSpacing:.2}}>🔥 {streak}d streak</span>
+            </div>
+          </div>
+          <button className="btn-s" onClick={()=>{setDraft({...profile});setEditP(true);}} style={{fontSize:12,padding:"5px 10px",flexShrink:0}}>✏️</button>
+        </div>
+      ):(
+        <div>
+          <div style={{fontSize:10,color:"rgba(255,255,255,0.28)",fontWeight:600,letterSpacing:.8,marginBottom:11}}>AGGIORNA PROFILO</div>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:9,marginBottom:12}}>
+            {[{l:"Nome",k:"name",t:"text"},{l:"Peso (kg)",k:"weight",t:"number"},{l:"Altezza (cm)",k:"height",t:"number"}].map(f=>(
+              <div key={f.k} style={f.k==="name"?{gridColumn:"1/-1"}:{}}>
+                <div style={{fontSize:10,color:"rgba(255,255,255,0.28)",marginBottom:4}}>{f.l}</div>
+                <input type={f.t} className="inp" value={draft[f.k]} onChange={e=>setDraft(p=>({...p,[f.k]:f.t==="number"?parseFloat(e.target.value)||0:e.target.value}))}/>
+              </div>
+            ))}
+          </div>
+          <div style={{display:"flex",gap:8}}>
+            <button className="btn-p" onClick={saveProfile} style={{flex:1}}>SALVA</button>
+            <button className="btn-s" onClick={()=>setEditP(false)} style={{flex:1}}>Annulla</button>
+          </div>
+        </div>
+      )}
+    </div>
+
+    {/* ── STATS DONUTS ────────────────────────────────────── */}
+    <div className="card">
+      <div style={{marginBottom:14}}>
+        <div style={{display:"flex",gap:5,marginBottom:10}}>
+          {PTYPES.map((lbl,i)=>(
+            <button key={i} onClick={()=>{setPeriodType(i);setPeriodOffset(0);}}
+              style={{flex:1,padding:"7px 0",borderRadius:9,border:"1px solid "+(periodType===i?"rgba(255,60,0,0.35)":"rgba(255,255,255,0.08)"),background:periodType===i?"rgba(255,60,0,0.13)":"rgba(255,255,255,0.04)",color:periodType===i?"#ff6520":"rgba(255,255,255,0.35)",fontSize:11,fontWeight:700,cursor:"pointer",letterSpacing:.2}}>
+              {lbl}
+            </button>
+          ))}
+        </div>
+        {periodType!==3&&(
+          <div style={{display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+            <button className="arr" onClick={()=>setPeriodOffset(o=>o+1)} disabled={!canGoBack}>&#8249;</button>
+            <div style={{textAlign:"center",flex:1}}>
+              <div style={{fontSize:12,fontWeight:600,color:periodOffset===0?"#ff6a20":"rgba(255,255,255,0.55)",letterSpacing:.2}}>{periodLabel}</div>
+            </div>
+            <button className="arr" onClick={()=>setPeriodOffset(o=>Math.max(0,o-1))} disabled={!canGoForward}>&#8250;</button>
+          </div>
+        )}
+      </div>
+      <div style={{display:"flex",justifyContent:"space-around",alignItems:"flex-start",marginBottom:16}}>
+        <Donut pct={foodPct||0} color={scoreToColor(foodPct!==null?foodPct/100:null)} size={84} stroke={7} label="Cibo" sublabel={isToday?(foodStars>0?"★".repeat(Math.min(Math.round(foodStars),5)):"-"):foodScoreLabel(stats.food)}>
+          {foodPct===null?<span style={{fontSize:17,color:"rgba(255,255,255,0.1)"}}>-</span>:<span style={{fontFamily:"'DM Sans'",fontSize:12,fontWeight:700,color:scoreToColor(foodPct/100),lineHeight:1}}>{foodPct.toFixed(1)}%</span>}
+        </Donut>
+        <Donut pct={trainPct||0} color={scoreToColor(trainPct!==null?trainPct/100:null)} size={84} stroke={7} label="Training" sublabel={isToday?(compEx+compSk)+"/"+exTotal:stats.training!==null?Math.round(stats.training*100)+"%":"-"}>
+          {trainPct===null?<span style={{fontSize:17,color:"rgba(255,255,255,0.1)"}}>-</span>:<span style={{fontFamily:"'DM Sans'",fontSize:12,fontWeight:700,color:scoreToColor(trainPct/100),lineHeight:1}}>{trainPct.toFixed(1)}%</span>}
+        </Donut>
+        <Donut pct={taskStatPct||0} color={scoreToColor(taskStatPct!==null?taskStatPct/100:null)} size={84} stroke={7} label="Task" sublabel={isToday?compTasks+"/"+todayTasks.length:stats.task!==null?Math.round(stats.task*100)+"%":"-"}>
+          {taskStatPct===null?<span style={{fontSize:17,color:"rgba(255,255,255,0.1)"}}>-</span>:<span style={{fontFamily:"'DM Sans'",fontSize:12,fontWeight:700,color:scoreToColor(taskStatPct/100),lineHeight:1}}>{taskStatPct.toFixed(1)}%</span>}
+        </Donut>
+      </div>
+      <div style={{background:"rgba(255,255,255,0.03)",border:"1px solid rgba(255,255,255,0.05)",borderRadius:13,padding:"13px 15px",display:"flex",alignItems:"center",gap:14}}>
+        <div style={{textAlign:"center",flexShrink:0}}>
+          <div className="H" style={{fontSize:50,lineHeight:1,color:overallPct!==null?scoreToColor(overallPct/100):"rgba(255,255,255,0.1)"}}>{overallPct!==null?(overallPct/10).toFixed(1):"—"}</div>
+          <div style={{fontSize:10,color:"rgba(255,255,255,0.2)",marginTop:1}}>/10</div>
+        </div>
+        <div style={{flex:1}}>
+          <div style={{fontSize:12,fontWeight:600,color:"rgba(255,255,255,0.58)",marginBottom:5}}>{isToday?"Voto di oggi":"Media · "+periodLabel}</div>
+          {overallPct!==null&&<>
+            <div className="pbar" style={{height:5}}><div className="pf" style={{width:overallPct+"%",background:scoreToColor(overallPct/100)}}/></div>
+            <div style={{fontSize:10,color:"rgba(255,255,255,0.22)",marginTop:4}}>{overallPct>=80?"Ottimo 🔥":overallPct>=60?"Bene 💪":"Puoi fare di più ⚡"}</div>
+          </>}
+        </div>
+      </div>
+    </div>
+
+    {/* ── ULTIMI 14 GIORNI ─────────────────────────────────── */}
+    <div className="card">
+      <div style={{fontSize:10,color:"rgba(255,255,255,0.22)",fontWeight:600,letterSpacing:.5,marginBottom:7}}>ULTIMI 14 GIORNI</div>
+      <div style={{display:"flex",gap:3}}>
+        {last14.map((d,i)=><div key={i} style={{flex:1,height:26,borderRadius:5,background:d.done?"rgba(255,55,0,0.75)":"rgba(255,255,255,0.05)",border:"1px solid "+(d.done?"rgba(255,60,0,0.35)":"rgba(255,255,255,0.04)"),transition:"background .3s"}}/>)}
+      </div>
+      <div style={{display:"flex",justifyContent:"space-between",marginTop:5}}>
+        <span style={{fontSize:9,color:"rgba(255,255,255,0.15)"}}>14gg fa</span>
+        <span style={{fontSize:9,color:"rgba(255,255,255,0.15)"}}>oggi</span>
+      </div>
+    </div>
+
+    <NoteCard note={note} setNote={setNote} tdStr={td}/>
+
+    {(()=>{
+      const allMatches=[
+        {date:"2026-04-18",time:"18:15",opponent:"Dream Basket Pisa",location:"Paladream Rosso, Pisa",home:false},
+        {date:"2026-04-25",time:"15:30",opponent:"Castelfranco Frog",location:"Palazzetto Cerreto Guidi",home:true},
+        {date:"2026-05-03",time:"11:00",opponent:"Juve Pontedera",location:"Pal.to Zoli, Pontedera",home:false},
+        {date:"2026-05-10",time:"18:00",opponent:"Etrusca Basket",location:"Palazzetto Cerreto Guidi",home:true},
+        {date:"2026-05-17",time:"15:00",opponent:"San Casciano",location:"Palestra Com., San Casciano",home:false},
+      ];
+      const todayMatch=allMatches.some(m=>m.date===td);
+      const upcomingMatches=allMatches.filter(m=>m.date>=td).slice(0,todayMatch?1:2);
+      if(!upcomingMatches.length)return null;
+      return(
+        <div className="card" style={{background:"linear-gradient(135deg,rgba(255,130,0,0.08),rgba(6,8,16,0.98))",border:"1px solid rgba(255,130,0,0.25)",marginBottom:11}}>
+          <div style={{fontSize:10,color:"#ff8c00",fontWeight:700,letterSpacing:.7,marginBottom:10}}>🏀 PROSSIME PARTITE — U14 FIP</div>
+          {upcomingMatches.map(m=>{
+            const isToday2=m.date===td;
+            const daysUntil=Math.ceil((new Date(m.date+"T12:00:00")-new Date())/864e5);
+            const when=isToday2?"OGGI":daysUntil===1?"Domani":new Date(m.date+"T12:00:00").toLocaleDateString("it-IT",{weekday:"short",day:"numeric",month:"short"});
+            return(
+              <div key={m.date} style={{display:"flex",alignItems:"center",gap:11,marginBottom:upcomingMatches.indexOf(m)<upcomingMatches.length-1?10:0}}>
+                <div style={{width:42,height:42,borderRadius:11,background:isToday2?"rgba(255,130,0,0.2)":"rgba(255,130,0,0.1)",border:"1px solid rgba(255,130,0,0.3)",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",flexShrink:0}}>
+                  <div style={{fontSize:isToday2?9:8,fontWeight:700,color:"#ff8c00",letterSpacing:.2}}>{isToday2?"OGGI":when.split(" ")[0].toUpperCase()}</div>
+                  {!isToday2&&<div style={{fontSize:13,fontWeight:700,color:"#fff",lineHeight:1}}>{when.split(" ")[1]}</div>}
+                  {isToday2&&<div style={{fontSize:16}}>🏆</div>}
+                </div>
+                <div style={{flex:1,minWidth:0}}>
+                  <div style={{fontSize:13,fontWeight:700,color:"rgba(255,255,255,0.88)",marginBottom:2}}>{m.home?"🏠":"✈️"} vs {m.opponent}</div>
+                  <div style={{fontSize:11,color:"rgba(255,255,255,0.35)"}}>{m.time} · {m.location}</div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      );
+    })()}
+    {nextGoal&&(
+      <div className="card cp">
+        <div style={{fontSize:10,color:"#bb99ff",fontWeight:600,letterSpacing:.8,marginBottom:7}}>PROSSIMO OBIETTIVO</div>
+        <div style={{fontSize:13,fontWeight:600,color:"rgba(255,255,255,0.85)",marginBottom:8,lineHeight:1.3}}>{nextGoal.text}</div>
+        <div style={{display:"flex",alignItems:"center",gap:10}}>
+          <div className="pbar" style={{flex:1,height:4}}><div className="pf" style={{width:Math.max(0,100-Math.max(0,nextDays)/30*100)+"%",background:"linear-gradient(90deg,#aa88ff,#ff4d00)"}}/></div>
+          <div style={{fontSize:12,color:nextDays<=3?"#ff4000":nextDays<=7?"#ff8c00":"#bb99ff",fontWeight:600,flexShrink:0}}>{nextDays<=0?"SCADUTO!":nextDays===1?"domani":nextDays+"gg"}</div>
+        </div>
+      </div>
+    )}
+
+    <div className="card" style={{background:"rgba(255,255,255,0.02)",borderColor:"rgba(255,255,255,0.045)"}}>
+      <div style={{fontSize:10,color:"rgba(255,255,255,0.2)",fontWeight:600,letterSpacing:.8,marginBottom:7}}>CITAZIONE DEL GIORNO</div>
+      <div style={{fontSize:13,color:"rgba(255,255,255,0.58)",lineHeight:1.6,fontStyle:"italic",marginBottom:5}}>"{quote.text}"</div>
+      <div style={{fontSize:11,color:"rgba(255,255,255,0.25)",fontWeight:500}}>— {quote.author}</div>
+    </div>
+  </>);
+}
+
+function NoteCard({note,setNote,tdStr}){
+  const [show,setShow]=useState(false);
+  const old=[];
+  try{for(let i=0;i<localStorage.length;i++){const k=localStorage.key(i);if(k&&k.startsWith("enea_note_")&&!k.endsWith(tdStr)){const v=localStorage.getItem(k);if(v&&v.length>2){const t=JSON.parse(v);if(t&&t.trim())old.push({date:k.replace("enea_note_",""),text:t});}}}}catch{}
+  old.sort((a,b)=>b.date.localeCompare(a.date));
+  return(
+    <div className="card">
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:9}}>
+        <div style={{fontSize:10,color:"rgba(255,255,255,0.28)",fontWeight:600,letterSpacing:.5}}>NOTE</div>
+        {old.length>0&&<button onClick={()=>setShow(!show)} style={{background:"rgba(255,255,255,0.04)",border:"1px solid rgba(255,255,255,0.07)",borderRadius:7,color:"rgba(255,255,255,0.28)",fontSize:11,padding:"3px 9px",cursor:"pointer"}}>📖 {show?"Chiudi":"Diario"}</button>}
+      </div>
+      <textarea rows={3} placeholder="Come ti senti oggi?" value={note} onChange={e=>setNote(e.target.value)}/>
+      {show&&old.length>0&&(
+        <div style={{marginTop:10,borderTop:"1px solid rgba(255,255,255,0.05)",paddingTop:10}}>
+          {old.slice(0,8).map(n=>(
+            <div key={n.date} style={{marginBottom:9}}>
+              <div style={{fontSize:10,color:"rgba(255,255,255,0.2)",fontWeight:600,marginBottom:2}}>{new Date(n.date).toLocaleDateString("it-IT",{weekday:"short",day:"numeric",month:"short"})}</div>
+              <div style={{fontSize:13,color:"rgba(255,255,255,0.4)",lineHeight:1.5}}>{n.text}</div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function StarRating({value,onChange,size=19}){
+  return(
+    <div style={{display:"flex",gap:2}}>
+      {[1,2,3,4,5].map(s=><button key={s} onClick={()=>onChange(value===s?0:s)} style={{fontSize:size,background:"none",border:"none",cursor:"pointer",lineHeight:1,color:s<=value?"#ffcc00":"rgba(255,255,255,0.09)",transform:s<=value?"scale(1.1)":"scale(1)",transition:"all .15s",padding:0}}>★</button>)}
+    </div>
+  );
+}
+
+function NutritionTab({customMealPlan,meals,setMeals,water,setWater,profile,foodStars,setFoodStars,skippedMeals,setSkippedMeals}){
+  const [openPlan,setOpenPlan]=useState(null);
+  const [mealStars,setMealStars]=useState(()=>load("mstars_"+todayStr(),{}));
+  useEffect(()=>{
+    save("mstars_"+todayStr(),mealStars);
+    const r=Object.values(mealStars).filter(v=>v>0);
+    setFoodStars(r.length>0?Math.round(r.reduce((a,b)=>a+b,0)/r.length):0);
+  },[mealStars]);
+  const wMl=water*250;
+  const r=Object.values(mealStars).filter(v=>v>0);
+  const avg=r.length>0?(r.reduce((a,b)=>a+b,0)/r.length).toFixed(1):null;
+  const sc=s=>s>=4?"#00da78":s>=3?"#ffcc00":s?"#ff4000":"rgba(255,255,255,0.2)";
+  const lbl=s=>(["","Pessimo","Male","Normale","Bene","Ottimo"])[Math.round(s)]||"";
+  return(<>
+    <div className="card cb">
+      <div style={{fontSize:10,color:"#4da6ff",fontWeight:600,letterSpacing:.5,marginBottom:11}}>IDRATAZIONE</div>
+      <div style={{display:"flex",alignItems:"center",gap:14,marginBottom:13}}>
+        <div>
+          <div className="H" style={{fontSize:36,color:"#4da6ff",lineHeight:1,fontWeight:700}}>{wMl}ml</div>
+          <div style={{fontSize:11,color:"rgba(255,255,255,0.22)",marginTop:2}}>{wMl>=2000?"Obiettivo raggiunto!":wMl>=1500?"Quasi ci sei":"Continua a bere"} · /2000ml</div>
+        </div>
+        <div style={{flex:1}}>
+          <div className="pbar" style={{height:8}}><div className="pf" style={{width:Math.min((wMl/2000)*100,100)+"%",background:"linear-gradient(90deg,#0070ff,#00c0ff)"}}/></div>
+          <div style={{fontSize:10,color:"rgba(255,255,255,0.22)",marginTop:4}}>{Math.round((wMl/2000)*100)}%</div>
+        </div>
+      </div>
+      <div style={{display:"flex",gap:7}}>
+        <button className="wb" onClick={()=>setWater(w=>Math.max(0,w-1))}>-</button>
+        <button className="wb" style={{flex:1}} onClick={()=>setWater(w=>w+1)}>+250ml</button>
+        <button className="wb" onClick={()=>setWater(0)} style={{color:"#ff6a20",borderColor:"rgba(255,77,0,0.2)"}}>reset</button>
+      </div>
+    </div>
+    {MEALS.map((meal,i)=>{
+      const stars=mealStars[meal]||0;
+      const activePlan=customMealPlan||MEAL_PLAN;
+      const plan=activePlan[meal];
+      const isOpen=openPlan===meal;
+      const isMealSkipped=skippedMeals.has(meal);
+      function toggleMealSkip(){setSkippedMeals(prev=>{const n=new Set(prev);n.has(meal)?n.delete(meal):n.add(meal);return n;});}
+      return(
+        <div key={meal} className="card" style={{opacity:isMealSkipped?0.55:1,borderColor:isMealSkipped?"rgba(255,204,0,0.3)":"rgba(255,255,255,0.065)"}}>
+          <div style={{display:"flex",alignItems:"center",gap:11}}>
+            <span style={{fontSize:20,flexShrink:0}}>{MEAL_ICONS[i]}</span>
+            <div style={{flex:1}}>
+              <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:4}}>
+                <div className="H" style={{fontSize:14,fontWeight:600,color:isMealSkipped?"rgba(255,255,255,0.35)":"#fff"}}>{meal}</div>
+                {isMealSkipped&&<span style={{fontSize:9,color:"#ffcc00",fontWeight:700,background:"rgba(255,204,0,0.12)",padding:"2px 6px",borderRadius:6,letterSpacing:.3}}>⚡ SALTATO</span>}
+              </div>
+              {!isMealSkipped&&<StarRating value={stars} onChange={v=>setMealStars(p=>({...p,[meal]:v}))}/>}
+              {isMealSkipped&&<div style={{fontSize:11,color:"rgba(255,204,0,0.5)"}}>Non conta nella media</div>}
+            </div>
+            <div style={{textAlign:"right",flexShrink:0,display:"flex",flexDirection:"column",gap:5,alignItems:"flex-end"}}>
+              <button onClick={toggleMealSkip} style={{background:isMealSkipped?"rgba(255,204,0,0.15)":"rgba(255,255,255,0.04)",border:"1px solid "+(isMealSkipped?"rgba(255,204,0,0.4)":"rgba(255,255,255,0.08)"),borderRadius:8,color:isMealSkipped?"#ffcc00":"rgba(255,255,255,0.3)",fontSize:12,padding:"4px 9px",cursor:"pointer",fontWeight:700,transition:"all .2s"}}>⚡</button>
+              {!isMealSkipped&&<button onClick={()=>setOpenPlan(isOpen?null:meal)} style={{background:"rgba(255,255,255,0.04)",border:"1px solid rgba(255,255,255,0.07)",borderRadius:8,color:"rgba(255,255,255,0.28)",fontSize:11,padding:"3px 9px",cursor:"pointer"}}>
+                Piano <span style={{display:"inline-block",transform:isOpen?"rotate(180deg)":"none",transition:"transform .2s"}}>▾</span>
+              </button>}
+            </div>
+          </div>
+          {isOpen&&plan&&(
+            <div style={{marginTop:11,paddingTop:11,borderTop:"1px solid rgba(255,255,255,0.06)"}}>
+              <div style={{background:"rgba(255,77,0,0.06)",border:"1px solid rgba(255,77,0,0.1)",borderRadius:9,padding:"7px 11px",marginBottom:9}}>
+                <div style={{fontSize:10,color:"#ff6a20",fontWeight:600,letterSpacing:.5,marginBottom:2}}>TARGET</div>
+                <div style={{fontSize:12,color:"rgba(255,255,255,0.52)",lineHeight:1.5}}>{plan.target}</div>
+              </div>
+              <div style={{fontSize:10,color:"rgba(255,255,255,0.22)",fontWeight:600,letterSpacing:.5,marginBottom:5}}>ESEMPI</div>
+              {plan.examples.map((ex,j)=><div key={j} style={{fontSize:12,color:"rgba(255,255,255,0.45)",lineHeight:1.55,marginBottom:4,paddingLeft:8,borderLeft:"2px solid rgba(255,255,255,0.07)"}}>{ex}</div>)}
+              {plan.warning&&<div style={{marginTop:8,background:"rgba(255,204,0,0.05)",border:"1px solid rgba(255,204,0,0.1)",borderRadius:9,padding:"7px 11px"}}><div style={{fontSize:11,color:"rgba(255,204,0,0.72)",lineHeight:1.4}}>{plan.warning}</div></div>}
+            </div>
+          )}
+        </div>
+      );
+    })}
+    <div className="card" style={{borderColor:"rgba(255,77,0,0.2)",background:"rgba(255,77,0,0.04)"}}>
+      <div style={{fontSize:10,color:"#ff6a20",fontWeight:600,letterSpacing:.5,marginBottom:7}}>💪 POST-ALLENAMENTO (entro 30-45 min)</div>
+      {["🥛 Latte 300ml + 3 cucchiai cacao + 2 fette pane con miele","🥛 Yogurt greco (vasetto grande) + banana + miele","🍳 2-3 uova + pane + succo di frutta"].map((t,i)=><div key={i} style={{fontSize:12,color:"rgba(255,255,255,0.45)",lineHeight:1.55,marginBottom:4,paddingLeft:8,borderLeft:"2px solid rgba(255,77,0,0.2)"}}>{t}</div>)}
+    </div>
+  </>);
+}
+
+function TrainingTab({sched,exercises,toggleEx,skills,toggleSk,compEx,compSk,total,allDone,trainingDone,markGameDone,skippedEx,setSkippedEx}){
+  const exList=sched.exercises||[];const skList=sched.skills||[];
+  const isRest=sched.type==="rest";const isGame=sched.type==="game";
+  const pct=total>0?Math.round(((compEx+compSk)/total)*100):0;
+  return(<>
+    {isGame?(
+      <div className="card" style={{background:"linear-gradient(135deg,rgba(255,140,0,0.1),rgba(8,9,16,0.96))",border:"1px solid rgba(255,140,0,0.22)",textAlign:"center",padding:"30px 20px"}}>
+        <div style={{fontSize:54}}>🏆</div>
+        <div className="H" style={{fontSize:38,color:"#ff8c00",marginTop:10}}>GAME DAY!</div>
+        <div style={{fontSize:13,color:"rgba(255,255,255,0.38)",marginTop:7,lineHeight:1.6}}>Warm-up leggero, testa libera.<br/>Vai e divertiti in campo!</div>
+        {!trainingDone?<button onClick={markGameDone} className="pulse" style={{marginTop:16,background:"linear-gradient(135deg,#ff8c00,#ffaa00)",border:"none",borderRadius:13,color:"#000",fontFamily:"'DM Sans'",fontSize:14,fontWeight:700,padding:"12px 30px",cursor:"pointer"}}>HO GIOCATO ✓</button>
+        :<div style={{marginTop:13,background:"rgba(0,201,126,0.09)",border:"1px solid rgba(0,201,126,0.2)",borderRadius:12,padding:10}}><span className="H" style={{fontSize:14,color:"#00da78"}}>PARTITA GIOCATA!</span></div>}
+      </div>
+    ):isRest?(
+      <div className="card" style={{textAlign:"center",padding:"30px 20px"}}>
+        <div style={{fontSize:54}}>😴</div>
+        <div className="H" style={{fontSize:30,marginTop:10,color:"rgba(255,255,255,0.2)"}}>RIPOSO TOTALE</div>
+        <div style={{fontSize:13,color:"rgba(255,255,255,0.18)",marginTop:7,lineHeight:1.6}}>Il recupero e parte dell'allenamento.</div>
+      </div>
+    ):(total===0&&!isGame&&!isRest?(
+      <div className="card" style={{textAlign:"center",padding:"24px 16px"}}>
+        <div style={{fontSize:36}}>📋</div>
+        <div className="H" style={{fontSize:20,marginTop:10,color:"rgba(255,255,255,0.35)"}}>NESSUN PIANO</div>
+        <div style={{fontSize:12,color:"rgba(255,255,255,0.18)",marginTop:6,lineHeight:1.6}}>Vai in ⚙️ Impostazioni → Piano allenamento<br/>per personalizzare ogni giorno.</div>
+      </div>
+    ):(
+      <div className="card co" style={{background:"linear-gradient(135deg,rgba(255,77,0,0.08),rgba(8,9,16,0.96))"}}>
+        <div style={{fontSize:10,color:"#ff6a20",fontWeight:600,letterSpacing:.8,marginBottom:5}}>PIANO DI OGGI</div>
+        <div style={{fontSize:28}}>{sched.icon}</div>
+        <div className="H" style={{fontSize:16,fontWeight:700,marginTop:5}}>{sched.label}</div>
+        {sched.note&&<div style={{fontSize:12,color:"rgba(255,255,255,0.32)",marginTop:5,lineHeight:1.5}}>{sched.note}</div>}
+        {total>0&&(
+          <div style={{marginTop:11}}>
+            <div style={{display:"flex",justifyContent:"space-between",marginBottom:5}}>
+              <span style={{fontSize:11,color:"rgba(255,255,255,0.28)"}}>Progresso</span>
+              <span style={{fontSize:11,color:allDone?"#00da78":"#ff6a20",fontWeight:600}}>{compEx+compSk}/{total} · {pct}%</span>
+            </div>
+            <div className="pbar" style={{height:5}}><div className="pf" style={{width:pct+"%",background:allDone?"linear-gradient(90deg,#00da78,#00ff9d)":"linear-gradient(90deg,#ff4d00,#ff8c00)"}}/></div>
+          </div>
+        )}
+        {allDone&&<div style={{marginTop:10,background:"rgba(0,201,126,0.08)",border:"1px solid rgba(0,201,126,0.2)",borderRadius:11,padding:9,textAlign:"center"}}><span className="H" style={{fontSize:14,color:"#00da78"}}>COMPLETATO!</span></div>}
+      </div>
+    ))
+    }
+    {exList.length>0&&(
+      <div className="card">
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:9}}>
+          <div style={{fontSize:10,color:"rgba(255,255,255,0.28)",fontWeight:600,letterSpacing:.5}}>FORZA ({compEx}/{exList.length})</div>
+          <span className="pill po">{Math.round((compEx/exList.length)*100)}%</span>
+        </div>
+        <div className="pbar" style={{marginBottom:12}}><div className="pf" style={{width:(compEx/exList.length)*100+"%",background:"linear-gradient(90deg,#ff3500,#ff8000)"}}/></div>
+        {exList.map(ex=>{
+          const isSkipped=skippedEx.has(ex.name);
+          function toggleSkip(){setSkippedEx(prev=>{const n=new Set(prev);n.has(ex.name)?n.delete(ex.name):n.add(ex.name);return n;});}
+          return(
+          <div key={ex.name} style={{display:"flex",alignItems:"center",gap:10,marginBottom:10,opacity:isSkipped?0.45:1}}>
+            {!isSkipped&&<button className={"ck "+(exercises[ex.name]?"done":"")} onClick={()=>toggleEx(ex.name)}>{exercises[ex.name]?"✓":""}</button>}
+            {isSkipped&&<div style={{width:24,height:24,borderRadius:7,background:"rgba(255,204,0,0.1)",border:"1px solid rgba(255,204,0,0.3)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:11}}>⚡</div>}
+            <span style={{fontSize:16}}>{ex.icon}</span>
+            <div style={{flex:1}}>
+              <div style={{fontSize:13,fontWeight:600,color:isSkipped?"rgba(255,204,0,0.5)":exercises[ex.name]?"#ff6a20":"rgba(255,255,255,0.8)",textDecoration:isSkipped||exercises[ex.name]?"line-through":"none"}}>{ex.name}</div>
+              <div style={{fontSize:11,color:isSkipped?"rgba(255,204,0,0.35)":"rgba(255,255,255,0.22)"}}>{isSkipped?"non conta":""+ex.sets}</div>
+            </div>
+            <button onClick={toggleSkip} style={{background:isSkipped?"rgba(255,204,0,0.12)":"rgba(255,255,255,0.04)",border:"1px solid "+(isSkipped?"rgba(255,204,0,0.3)":"rgba(255,255,255,0.07)"),borderRadius:7,color:isSkipped?"#ffcc00":"rgba(255,255,255,0.25)",fontSize:11,padding:"3px 7px",cursor:"pointer",fontWeight:700}}>⚡</button>
+          </div>
+        );})}
+      </div>
+    )}
+    {skList.length>0&&(
+      <div className="card">
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:9}}>
+          <div style={{fontSize:10,color:"rgba(255,255,255,0.28)",fontWeight:600,letterSpacing:.5}}>BASKET ({compSk}/{skList.length})</div>
+          <span className="pill po">{Math.round((compSk/skList.length)*100)}%</span>
+        </div>
+        <div className="pbar" style={{marginBottom:12}}><div className="pf" style={{width:(compSk/skList.length)*100+"%",background:"linear-gradient(90deg,#ff3500,#ff8000)"}}/></div>
+        {skList.map(sk=>{
+          const isSkipped=skippedEx.has(sk);
+          function toggleSkipSk(){setSkippedEx(prev=>{const n=new Set(prev);n.has(sk)?n.delete(sk):n.add(sk);return n;});}
+          return(
+          <div key={sk} style={{display:"flex",alignItems:"center",gap:10,marginBottom:9,opacity:isSkipped?0.45:1}}>
+            {!isSkipped&&<button className={"ck "+(skills[sk]?"done":"")} onClick={()=>toggleSk(sk)}>{skills[sk]?"✓":""}</button>}
+            {isSkipped&&<div style={{width:24,height:24,borderRadius:7,background:"rgba(255,204,0,0.1)",border:"1px solid rgba(255,204,0,0.3)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:11}}>⚡</div>}
+            <span style={{fontSize:13,fontWeight:500,color:isSkipped?"rgba(255,204,0,0.5)":skills[sk]?"#ff6a20":"rgba(255,255,255,0.8)",textDecoration:isSkipped||skills[sk]?"line-through":"none",flex:1}}>{sk}</span>
+            <button onClick={toggleSkipSk} style={{background:isSkipped?"rgba(255,204,0,0.12)":"rgba(255,255,255,0.04)",border:"1px solid "+(isSkipped?"rgba(255,204,0,0.3)":"rgba(255,255,255,0.07)"),borderRadius:7,color:isSkipped?"#ffcc00":"rgba(255,255,255,0.25)",fontSize:11,padding:"3px 7px",cursor:"pointer",fontWeight:700}}>⚡</button>
+          </div>
+        );})}
+      </div>
+    )}
+    <div className="card cb">
+      <div style={{fontSize:10,color:"#4da6ff",fontWeight:600,letterSpacing:.5,marginBottom:10}}>PIANO SETTIMANA</div>
+      {Object.entries(SCHEDULE).map(([i,s])=>(
+        <div key={i} style={{display:"flex",alignItems:"center",gap:9,marginBottom:8,padding:"3px 0"}}>
+          <span style={{fontSize:11,color:"rgba(255,255,255,0.2)",fontWeight:600,width:24}}>{DAYS_SHORT[i]}</span>
+          <span style={{fontSize:14}}>{s.icon}</span>
+          <span style={{fontSize:12,color:"rgba(255,255,255,0.4)",lineHeight:1.3}}>{s.label}</span>
+        </div>
+      ))}
+    </div>
+  </>);
+}
+
+function GoalsTab({goals,toggleGoal,removeGoal,newGoal,setNewGoal,goalCat,setGoalCat,newGoalDate,setNewGoalDate,addGoal}){
+  const cats=["basket","forza","salute","altro"];
+  const cc={basket:"#ff4000",forza:"#0080ff",salute:"#00da78",altro:"#aa88ff"};
+  const ci={basket:"🏀",forza:"💪",salute:"❤️",altro:"⭐"};
+  function dL(d){if(!d)return null;return Math.ceil((new Date(d)-new Date())/864e5);}
+  function dlL(d){if(!d)return null;const n=dL(d);const fmt=new Date(d).toLocaleDateString("it-IT",{day:"numeric",month:"short"});
+    if(n<0)return{text:"Scaduto · "+fmt,color:"#ff4000"};
+    if(n===0)return{text:"Scade OGGI!",color:"#ff4000"};
+    if(n<=7)return{text:n+"gg · "+fmt,color:"#ff8c00"};
+    if(n<=30)return{text:n+"gg · "+fmt,color:"#ffcc00"};
+    return{text:"Entro "+fmt,color:"rgba(255,255,255,0.25)"};
+  }
+  const active=goals.filter(g=>!g.done);const done=goals.filter(g=>g.done);
+  return(<>
+    <div className="card cp">
+      <div style={{fontSize:10,color:"#bb99ff",fontWeight:600,letterSpacing:.8,marginBottom:7}}>OBIETTIVI</div>
+      <div style={{display:"flex",alignItems:"flex-end",gap:6,marginBottom:10}}>
+        <div className="H" style={{fontSize:48,fontWeight:700,lineHeight:1}}>{done.length}</div>
+        <div className="H" style={{fontSize:28,color:"rgba(255,255,255,0.17)",lineHeight:1,marginBottom:4}}>/{goals.length}</div>
+      </div>
+      <div className="pbar" style={{height:4}}><div className="pf" style={{width:(goals.length?(done.length/goals.length)*100:0)+"%",background:"linear-gradient(90deg,#aa88ff,#ff4d00)"}}/></div>
+    </div>
+    <div className="card">
+      <div style={{fontSize:10,color:"rgba(255,255,255,0.25)",fontWeight:600,letterSpacing:.8,marginBottom:11}}>+ NUOVO OBIETTIVO</div>
+      <input className="inp" placeholder="es. Entrare nel quintetto titolare…" value={newGoal} onChange={e=>setNewGoal(e.target.value)} onKeyDown={e=>e.key==="Enter"&&addGoal()} style={{marginBottom:9}}/>
+      <div style={{display:"flex",gap:5,marginBottom:9,flexWrap:"wrap"}}>
+        {cats.map(c=><button key={c} className={"tag "+(goalCat===c?"on":"")} onClick={()=>setGoalCat(c)} style={{borderColor:goalCat===c?cc[c]:"rgba(255,255,255,0.09)",background:goalCat===c?cc[c]+"18":"transparent",color:goalCat===c?cc[c]:"rgba(255,255,255,0.32)"}}>{ci[c]} {c}</button>)}
+      </div>
+      <div style={{display:"flex",gap:8,alignItems:"flex-end"}}>
+        <div style={{flex:1}}>
+          <div style={{fontSize:10,color:"rgba(255,255,255,0.25)",marginBottom:4}}>Scadenza</div>
+          <input type="date" className="inp-date" value={newGoalDate} onChange={e=>setNewGoalDate(e.target.value)}/>
+        </div>
+        <button className="btn-p" onClick={addGoal} style={{padding:"10px 16px",height:42}}>AGGIUNGI</button>
+      </div>
+    </div>
+    {active.map(g=>{const dl=g.deadline?dlL(g.deadline):null;return(
+      <div key={g.id} className="card" style={{padding:13}}>
+        <div style={{display:"flex",gap:11,alignItems:"flex-start"}}>
+          <div style={{width:34,height:34,borderRadius:10,background:cc[g.category]+"14",border:"1.5px solid "+cc[g.category]+"32",display:"flex",alignItems:"center",justifyContent:"center",fontSize:17,flexShrink:0}}>{ci[g.category]}</div>
+          <div style={{flex:1,minWidth:0}}>
+            <div style={{fontSize:13,fontWeight:600,color:"rgba(255,255,255,0.86)",lineHeight:1.3,marginBottom:5}}>{g.text}</div>
+            {dl?<div style={{fontSize:11,color:dl.color,fontWeight:500}}>{dl.text}</div>:<div style={{fontSize:11,color:"rgba(255,255,255,0.17)"}}>Nessuna scadenza</div>}
+          </div>
+          <div style={{display:"flex",flexDirection:"column",gap:5,flexShrink:0}}>
+            <button onClick={()=>toggleGoal(g.id)} style={{background:"rgba(0,201,126,0.1)",border:"1px solid rgba(0,201,126,0.2)",borderRadius:8,color:"#00da78",fontSize:11,fontWeight:600,padding:"5px 9px",cursor:"pointer"}}>FATTO</button>
+            <button onClick={()=>removeGoal(g.id)} className="btn-g" style={{fontSize:13,textAlign:"center"}}>✕</button>
+          </div>
+        </div>
+      </div>
+    );})}
+    {done.length>0&&(
+      <div style={{marginTop:4}}>
+        <div style={{fontSize:10,color:"rgba(255,255,255,0.18)",fontWeight:600,letterSpacing:.5,marginBottom:8,paddingLeft:2}}>COMPLETATI</div>
+        {done.map(g=>(
+          <div key={g.id} className="card" style={{border:"1px solid rgba(0,201,126,0.1)",opacity:.58}}>
+            <div style={{display:"flex",gap:11,alignItems:"center"}}>
+              <div style={{width:30,height:30,borderRadius:9,background:"rgba(0,201,126,0.08)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:14,flexShrink:0}}>✅</div>
+              <div style={{flex:1}}><div style={{fontSize:12,fontWeight:500,color:"rgba(255,255,255,0.27)",textDecoration:"line-through"}}>{g.text}</div><div style={{fontSize:10,color:"#00da78",fontWeight:600,marginTop:1}}>RAGGIUNTO</div></div>
+              <button onClick={()=>removeGoal(g.id)} className="btn-g" style={{fontSize:13}}>✕</button>
+            </div>
+          </div>
+        ))}
+      </div>
+    )}
+  </>);
+}
+
+function TasksTab({tasks,setTasks,todayTasks,taskDone,toggleTask,addTask,newTask,setNewTask,specialTasks,setSpecialTasks,dow,skippedTasks2,setSkippedTasks2,goals,toggleGoal,removeGoal,newGoal,setNewGoal,goalCat,setGoalCat,newGoalDate,setNewGoalDate,addGoal}){
+  const [newSpec,setNewSpec]=useState("");
+  const [editId,setEditId]=useState(null);
+  const [expId,setExpId]=useState(null);
+  const [insertAfterId,setInsertAfterId]=useState(null); // per pulsante + tra task
+  const [insertText,setInsertText]=useState("");
+  const [insertSub,setInsertSub]=useState("");
+  const compDaily=todayTasks.filter(t=>taskDone[t.id]).length;
+
+  /* ── Drag & Drop con Pointer Events ─────────────────────── */
+  const dragRef=useRef({from:null,over:null,listKey:null});
+  const [dragIdx,setDragIdx]=useState(null);
+  const [overIdx,setOverIdx]=useState(null);
+  const listRefQ=useRef(null);
+  const listRefS=useRef(null);
+
+  function handleDragStart(idx,listKey){
+    dragRef.current={from:idx,over:idx,listKey};
+    setDragIdx(idx);setOverIdx(idx);
+  }
+  function handlePointerMove(e,listKey){
+    if(dragRef.current.from===null||dragRef.current.listKey!==listKey)return;
+    const ref=listKey==="q"?listRefQ.current:listRefS.current;
+    if(!ref)return;
+    const items=ref.querySelectorAll("[data-drag]");
+    let found=null;
+    items.forEach((el,i)=>{
+      const r=el.getBoundingClientRect();
+      if(e.clientY>=r.top&&e.clientY<=r.bottom)found=i;
+    });
+    if(found!==null&&found!==dragRef.current.over){
+      dragRef.current.over=found;setOverIdx(found);
+    }
+  }
+  function handleDragEnd(listKey){
+    const {from,over}=dragRef.current;
+    if(from!==null&&over!==null&&from!==over){
+      if(listKey==="q"){
+        const full=[...tasks];
+        // Troviamo gli indici globali delle todayTasks nell'array tasks
+        const todayIds=todayTasks.map(t=>t.id);
+        const globalFrom=full.findIndex(t=>t.id===todayIds[from]);
+        const globalOver=full.findIndex(t=>t.id===todayIds[over]);
+        if(globalFrom!==-1&&globalOver!==-1){
+          const [removed]=full.splice(globalFrom,1);
+          full.splice(globalOver,0,removed);
+          setTasks(full);
+        }
+      } else {
+        const nl=[...specialTasks.filter(t=>!t.done)];
+        const [rem]=nl.splice(from,1);nl.splice(over,0,rem);
+        setSpecialTasks([...nl,...specialTasks.filter(t=>t.done)]);
+      }
+    }
+    dragRef.current={from:null,over:null,listKey:null};
+    setDragIdx(null);setOverIdx(null);
+  }
+
+  /* ── Funzioni task ─────────────────────────────────────── */
+  function addSpec(){if(!newSpec.trim())return;setSpecialTasks(prev=>[...prev,{id:Date.now(),text:newSpec,done:false,subtitle:""}]);setNewSpec("");}
+  function toggleSpec(id){setSpecialTasks(prev=>prev.map(t=>t.id===id?{...t,done:!t.done}:t));}
+  function removeSpec(id){setSpecialTasks(prev=>prev.filter(t=>t.id!==id));}
+  function updSpec(id,ch){setSpecialTasks(prev=>prev.map(t=>t.id===id?{...t,...ch}:t));}
+  function removeTask(id){setTasks(prev=>prev.filter(t=>t.id!==id));}
+  function updTask(id,ch){setTasks(prev=>prev.map(t=>t.id===id?{...t,...ch}:t));}
+  function toggleDay(id,day){setTasks(prev=>prev.map(t=>{if(t.id!==id)return t;const days=t.days||[0,1,2,3,4,5,6];return{...t,days:days.includes(day)?days.filter(d=>d!==day):[...days,day].sort()};}));}
+  const activeSpec=specialTasks.filter(t=>!t.done);
+  const doneSpec=specialTasks.filter(t=>t.done);
+
+  /* ── Inserisci task dopo una specifica ──────────────────── */
+  function confirmInsert(afterId,isQ){
+    if(!insertText.trim()){setInsertAfterId(null);return;}
+    const newT={id:Date.now(),text:insertText.trim(),subtitle:insertSub.trim(),days:[0,1,2,3,4,5,6],done:false};
+    if(isQ){
+      const arr=[...tasks];
+      const idx=arr.findIndex(t=>t.id===afterId);
+      arr.splice(idx+1,0,newT);
+      setTasks(arr);
+    } else {
+      const arr=[...specialTasks];
+      const idx=arr.findIndex(t=>t.id===afterId);
+      arr.splice(idx+1,0,newT);
+      setSpecialTasks(arr);
+    }
+    setInsertAfterId(null);setInsertText("");setInsertSub("");
+  }
+
+  /* ── TaskRow ─────────────────────────────────────────────── */
+  function TaskRow({t,isQ,listKey,idx}){
+    const isDone=isQ?!!taskDone[t.id]:t.done;
+    const isExp=expId===t.id;const isEd=editId===t.id;
+    const days=t.days||[0,1,2,3,4,5,6];
+    const [draftText,setDraftText]=React.useState(t.text);
+    const [draftSub,setDraftSub]=React.useState(t.subtitle||"");
+    const isInsertHere=insertAfterId===t.id;
+    const isDragging=dragIdx===idx;
+    const isOver=overIdx===idx&&dragIdx!==null&&dragIdx!==idx;
+
+    React.useEffect(()=>{setDraftText(t.text);setDraftSub(t.subtitle||"");},[t.text,t.subtitle]);
+
+    return(<div data-drag style={{marginBottom:3,opacity:isDragging?0.35:1,transform:isOver?"translateY(-3px)":"none",transition:"opacity .15s,transform .15s"}}>
+      <div style={{background:"rgba(255,255,255,0.03)",border:"1px solid "+(isDone?"rgba(0,201,126,0.1)":"rgba(255,255,255,0.065)"),borderRadius:13,overflow:"hidden"}}>
+        <div style={{display:"flex",alignItems:"center",gap:9,padding:"10px 11px"}}>
+          {/* Drag handle */}
+          <div
+            onPointerDown={e=>{e.currentTarget.setPointerCapture(e.pointerId);handleDragStart(idx,listKey);}}
+            onPointerMove={e=>handlePointerMove(e,listKey)}
+            onPointerUp={e=>{e.currentTarget.releasePointerCapture(e.pointerId);handleDragEnd(listKey);}}
+            style={{cursor:"grab",color:"rgba(255,255,255,0.18)",fontSize:14,userSelect:"none",touchAction:"none",paddingRight:2,lineHeight:1}}
+          >≡</div>
+          <button className={"ck "+(isQ?"dg ":"")+(isDone?"done":"")} onClick={()=>isQ?toggleTask(t.id):toggleSpec(t.id)}>{isDone?"✓":""}</button>
+          <div style={{flex:1,minWidth:0}}>
+            <div style={{display:"flex",alignItems:"center",gap:5}}>
+              <div style={{fontSize:13,fontWeight:500,color:isDone?"rgba(255,255,255,0.2)":isQ&&skippedTasks2.has(String(t.id))?"rgba(255,204,0,0.5)":"rgba(255,255,255,0.83)",textDecoration:isDone||(isQ&&skippedTasks2.has(String(t.id)))?"line-through":"none"}}>{t.text}</div>
+              {isQ&&skippedTasks2.has(String(t.id))&&<span style={{fontSize:9,color:"#ffcc00",fontWeight:700,background:"rgba(255,204,0,0.1)",padding:"1px 5px",borderRadius:5}}>⚡</span>}
+            </div>
+            {!isExp&&t.subtitle&&<div style={{fontSize:11,color:"rgba(255,255,255,0.25)",marginTop:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{t.subtitle}</div>}
+          </div>
+          <div style={{display:"flex",gap:4,flexShrink:0,alignItems:"center"}}>
+            {isQ&&<button onClick={()=>{setSkippedTasks2(prev=>{const n=new Set(prev);n.has(String(t.id))?n.delete(String(t.id)):n.add(String(t.id));return n;});}} style={{background:skippedTasks2.has(String(t.id))?"rgba(255,204,0,0.15)":"rgba(255,255,255,0.04)",border:"1px solid "+(skippedTasks2.has(String(t.id))?"rgba(255,204,0,0.4)":"rgba(255,255,255,0.07)"),borderRadius:7,color:skippedTasks2.has(String(t.id))?"#ffcc00":"rgba(255,255,255,0.22)",fontSize:11,padding:"3px 7px",cursor:"pointer",fontWeight:700}}>⚡</button>}
+            <button onClick={()=>{setEditId(isEd?null:t.id);setExpId(null);}} style={{background:isEd?"rgba(255,77,0,0.1)":"rgba(255,255,255,0.05)",border:"1px solid "+(isEd?"rgba(255,77,0,0.22)":"rgba(255,255,255,0.07)"),borderRadius:7,color:isEd?"#ff6a20":"rgba(255,255,255,0.28)",fontSize:11,padding:"3px 8px",cursor:"pointer"}}>✏️</button>
+            {!isEd&&<button onClick={()=>{setExpId(isExp?null:t.id);setEditId(null);}} style={{background:isExp?"rgba(255,77,0,0.07)":"rgba(255,255,255,0.05)",border:"1px solid "+(isExp?"rgba(255,77,0,0.18)":"rgba(255,255,255,0.07)"),borderRadius:7,color:isExp?"#ff6a20":"rgba(255,255,255,0.28)",fontSize:11,padding:"3px 8px",cursor:"pointer",display:"inline-block",transform:isExp?"rotate(180deg)":"none",transition:"transform .2s"}}>&#9662;</button>}
+            {isEd&&<button onClick={()=>isQ?removeTask(t.id):removeSpec(t.id)} style={{background:"rgba(255,0,0,0.07)",border:"1px solid rgba(255,0,0,0.14)",borderRadius:7,color:"#ff6a20",fontSize:11,padding:"3px 8px",cursor:"pointer"}}>✕</button>}
+          </div>
+        </div>
+        {isExp&&!isEd&&t.subtitle&&(
+          <div style={{padding:"0 11px 10px",borderTop:"1px solid rgba(255,255,255,0.05)"}}>
+            <div style={{fontSize:13,color:"rgba(255,255,255,0.4)",lineHeight:1.6,marginTop:9}}>{t.subtitle}</div>
+          </div>
+        )}
+        {isEd&&(
+          <div style={{padding:"0 11px 12px",borderTop:"1px solid rgba(255,255,255,0.05)"}}>
+            <div style={{fontSize:10,color:"rgba(255,255,255,0.25)",fontWeight:600,letterSpacing:.5,marginTop:10,marginBottom:4}}>NOME</div>
+            <input className="inp" value={draftText} onChange={e=>setDraftText(e.target.value)} onBlur={()=>isQ?updTask(t.id,{text:draftText}):updSpec(t.id,{text:draftText})} style={{marginBottom:9}}/>
+            <div style={{fontSize:10,color:"rgba(255,255,255,0.25)",fontWeight:600,letterSpacing:.5,marginBottom:4}}>SOTTOTITOLO</div>
+            <input className="inp" placeholder="Descrizione opzionale..." value={draftSub} onChange={e=>setDraftSub(e.target.value)} onBlur={()=>isQ?updTask(t.id,{subtitle:draftSub}):updSpec(t.id,{subtitle:draftSub})} style={{marginBottom:10}}/>
+            {isQ&&<>
+              <div style={{fontSize:10,color:"rgba(255,255,255,0.25)",fontWeight:600,letterSpacing:.5,marginBottom:7}}>GIORNI</div>
+              <div style={{display:"flex",gap:3,marginBottom:4}}>
+                {DAYS_LETTER.map((d,i)=><button key={i} onClick={()=>toggleDay(t.id,i)} style={{flex:1,padding:"6px 0",borderRadius:8,border:"1px solid "+(days.includes(i)?"rgba(255,77,0,0.35)":"rgba(255,255,255,0.08)"),background:days.includes(i)?"rgba(255,77,0,0.13)":"rgba(255,255,255,0.04)",color:days.includes(i)?"#ff6a20":"rgba(255,255,255,0.25)",fontSize:11,fontWeight:600,cursor:"pointer"}}>{d}</button>)}
+              </div>
+            </>}
+            <button onClick={()=>setEditId(null)} className="btn-p" style={{width:"100%",marginTop:10}}>FATTO ✓</button>
+          </div>
+        )}
+      </div>
+      {/* ── Pulsante "+" per inserire task subito dopo ── */}
+      {isInsertHere?(
+        <div style={{background:"rgba(255,255,255,0.03)",border:"1px solid rgba(255,77,0,0.2)",borderRadius:11,padding:"10px 11px",marginTop:3}}>
+          <input autoFocus className="inp" placeholder="Nome nuova task..." value={insertText} onChange={e=>setInsertText(e.target.value)} onKeyDown={e=>{if(e.key==="Enter")confirmInsert(t.id,isQ);if(e.key==="Escape"){setInsertAfterId(null);setInsertText("");setInsertSub("");}}} style={{marginBottom:7}}/>
+          <input className="inp" placeholder="Sottotitolo opzionale..." value={insertSub} onChange={e=>setInsertSub(e.target.value)} onKeyDown={e=>{if(e.key==="Enter")confirmInsert(t.id,isQ);}} style={{marginBottom:9,fontSize:14}}/>
+          <div style={{display:"flex",gap:7}}>
+            <button className="btn-p" onClick={()=>confirmInsert(t.id,isQ)} style={{flex:1,padding:"9px"}}>AGGIUNGI ✓</button>
+            <button className="btn-s" onClick={()=>{setInsertAfterId(null);setInsertText("");setInsertSub("");}}>Annulla</button>
+          </div>
+        </div>
+      ):(
+        <button onClick={()=>{setInsertAfterId(t.id);setInsertText("");setInsertSub("");}} style={{width:"100%",background:"transparent",border:"none",padding:"2px 0 4px",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:4,color:"rgba(255,255,255,0.12)",fontSize:11,transition:"color .15s"}} onMouseEnter={e=>e.currentTarget.style.color="rgba(255,77,0,0.5)"} onMouseLeave={e=>e.currentTarget.style.color="rgba(255,255,255,0.12)"}>
+          <span style={{fontSize:13}}>+</span>
+        </button>
+      )}
+    </div>);
+  }
+
+  return(<>
+    {/* ── TASK QUOTIDIANE ─────────────────────────────────── */}
+    <div className="card cg">
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
+        <div>
+          <div style={{fontSize:13,fontWeight:700,color:"rgba(255,255,255,0.82)"}}>Task quotidiane</div>
+          <div style={{fontSize:11,color:"rgba(255,255,255,0.25)",marginTop:1}}>Oggi: {DAYS_SHORT[dow]} · si resettano ogni giorno</div>
+        </div>
+        <span className="pill pg">{compDaily}/{todayTasks.length}</span>
+      </div>
+      <div className="pbar" style={{marginBottom:10,height:4}}><div className="pf" style={{width:(todayTasks.length?Math.round((compDaily/todayTasks.length)*100):0)+"%",background:"linear-gradient(90deg,#00da78,#00ff9d)"}}/></div>
+      <div ref={listRefQ}>
+        {todayTasks.map((t,idx)=><TaskRow key={t.id} t={t} isQ={true} listKey="q" idx={idx}/>)}
+      </div>
+      <div style={{display:"flex",gap:7,marginTop:10}}>
+        <input className="inp" placeholder="Aggiungi task quotidiana..." value={newTask} onChange={e=>setNewTask(e.target.value)} onKeyDown={e=>e.key==="Enter"&&addTask()}/>
+        <button className="btn-p" onClick={addTask} style={{padding:"10px 13px",fontSize:18}}>+</button>
+      </div>
+    </div>
+
+    {/* ── TO-DO SPECIALI ──────────────────────────────────── */}
+    <div className="card cp">
+      <div style={{marginBottom:10}}>
+        <div style={{fontSize:13,fontWeight:700,color:"rgba(255,255,255,0.82)"}}>To-do speciali</div>
+        <div style={{fontSize:11,color:"rgba(255,255,255,0.25)",marginTop:1}}>Non si resettano — cose da fare una volta</div>
+      </div>
+      {activeSpec.length===0&&doneSpec.length===0&&<div style={{textAlign:"center",padding:"13px 0",color:"rgba(255,255,255,0.17)",fontSize:12}}>Nessuna to-do speciale</div>}
+      <div ref={listRefS}>
+        {activeSpec.map((t,idx)=><TaskRow key={t.id} t={t} isQ={false} listKey="s" idx={idx}/>)}
+      </div>
+      <div style={{display:"flex",gap:7,marginTop:activeSpec.length>0?10:4}}>
+        <input className="inp" placeholder="Aggiungi to-do speciale..." value={newSpec} onChange={e=>setNewSpec(e.target.value)} onKeyDown={e=>e.key==="Enter"&&addSpec()}/>
+        <button className="btn-p" onClick={addSpec} style={{padding:"10px 14px",fontSize:18,background:"linear-gradient(135deg,#c0a0ff,#8866dd)"}}>+</button>
+      </div>
+      {doneSpec.length>0&&(
+        <div style={{marginTop:13,borderTop:"1px solid rgba(255,255,255,0.05)",paddingTop:10}}>
+          <div style={{fontSize:10,color:"rgba(255,255,255,0.17)",fontWeight:600,letterSpacing:.5,marginBottom:8}}>COMPLETATE</div>
+          {doneSpec.map((t,idx)=><TaskRow key={t.id} t={t} isQ={false} listKey="s_done" idx={idx}/>)}
+        </div>
+      )}
+    </div>
+
+    {/* ── OBIETTIVI ────────────────────────────────────────── */}
+    {(()=>{
+      const cats=["basket","forza","salute","altro"];
+      const cc={basket:"#ff4000",forza:"#0080ff",salute:"#00da78",altro:"#aa88ff"};
+      const ci={basket:"🏀",forza:"💪",salute:"❤️",altro:"⭐"};
+      function dL(d){if(!d)return null;return Math.ceil((new Date(d)-new Date())/864e5);}
+      function dlL(d){if(!d)return null;const n=dL(d);const fmt=new Date(d).toLocaleDateString("it-IT",{day:"numeric",month:"short"});
+        if(n<0)return{text:"Scaduto · "+fmt,color:"#ff4000"};
+        if(n===0)return{text:"Scade OGGI!",color:"#ff4000"};
+        if(n<=7)return{text:n+"gg · "+fmt,color:"#ff8c00"};
+        if(n<=30)return{text:n+"gg · "+fmt,color:"#ffcc00"};
+        return{text:"Entro "+fmt,color:"rgba(255,255,255,0.25)"};}
+      const active=goals.filter(g=>!g.done);const done=goals.filter(g=>g.done);
+      return(<>
+        <div style={{fontSize:10,color:"rgba(255,255,255,0.22)",fontWeight:600,letterSpacing:.6,marginTop:18,marginBottom:10,paddingLeft:2}}>🎯 OBIETTIVI</div>
+        <div className="card cp" style={{marginBottom:10}}>
+          <div style={{display:"flex",alignItems:"flex-end",gap:6,marginBottom:8}}>
+            <div className="H" style={{fontSize:40,fontWeight:700,lineHeight:1}}>{done.length}</div>
+            <div className="H" style={{fontSize:22,color:"rgba(255,255,255,0.17)",lineHeight:1,marginBottom:3}}>/{goals.length}</div>
+            <div style={{flex:1}}/>
+            <span style={{fontSize:11,color:"#bb99ff",fontWeight:600}}>COMPLETATI</span>
+          </div>
+          <div className="pbar" style={{height:4}}><div className="pf" style={{width:(goals.length?(done.length/goals.length)*100:0)+"%",background:"linear-gradient(90deg,#aa88ff,#ff4d00)"}}/></div>
+        </div>
+        <div className="card" style={{marginBottom:10}}>
+          <div style={{fontSize:10,color:"rgba(255,255,255,0.25)",fontWeight:600,letterSpacing:.8,marginBottom:9}}>+ NUOVO OBIETTIVO</div>
+          <input className="inp" placeholder="es. Entrare nel quintetto titolare…" value={newGoal} onChange={e=>setNewGoal(e.target.value)} onKeyDown={e=>e.key==="Enter"&&addGoal()} style={{marginBottom:8}}/>
+          <div style={{display:"flex",gap:4,marginBottom:8,flexWrap:"wrap"}}>
+            {cats.map(c=><button key={c} className={"tag "+(goalCat===c?"on":"")} onClick={()=>setGoalCat(c)} style={{borderColor:goalCat===c?cc[c]:"rgba(255,255,255,0.09)",background:goalCat===c?cc[c]+"18":"transparent",color:goalCat===c?cc[c]:"rgba(255,255,255,0.32)"}}>{ci[c]} {c}</button>)}
+          </div>
+          <div style={{display:"flex",gap:8,alignItems:"flex-end"}}>
+            <div style={{flex:1}}>
+              <div style={{fontSize:10,color:"rgba(255,255,255,0.25)",marginBottom:4}}>Scadenza</div>
+              <input type="date" className="inp-date" value={newGoalDate} onChange={e=>setNewGoalDate(e.target.value)}/>
+            </div>
+            <button className="btn-p" onClick={addGoal} style={{padding:"10px 16px",height:42}}>AGGIUNGI</button>
+          </div>
+        </div>
+        {active.map(g=>{const dl=g.deadline?dlL(g.deadline):null;return(
+          <div key={g.id} className="card" style={{padding:13,marginBottom:7}}>
+            <div style={{display:"flex",gap:11,alignItems:"flex-start"}}>
+              <div style={{width:34,height:34,borderRadius:10,background:cc[g.category]+"14",border:"1.5px solid "+cc[g.category]+"32",display:"flex",alignItems:"center",justifyContent:"center",fontSize:17,flexShrink:0}}>{ci[g.category]}</div>
+              <div style={{flex:1,minWidth:0}}>
+                <div style={{fontSize:13,fontWeight:600,color:"rgba(255,255,255,0.86)",lineHeight:1.3,marginBottom:5}}>{g.text}</div>
+                {dl?<div style={{fontSize:11,color:dl.color,fontWeight:500}}>{dl.text}</div>:<div style={{fontSize:11,color:"rgba(255,255,255,0.17)"}}>Nessuna scadenza</div>}
+              </div>
+              <div style={{display:"flex",flexDirection:"column",gap:5,flexShrink:0}}>
+                <button onClick={()=>toggleGoal(g.id)} style={{background:"rgba(0,201,126,0.1)",border:"1px solid rgba(0,201,126,0.2)",borderRadius:8,color:"#00da78",fontSize:11,fontWeight:600,padding:"5px 9px",cursor:"pointer"}}>FATTO</button>
+                <button onClick={()=>removeGoal(g.id)} className="btn-g" style={{fontSize:13,textAlign:"center"}}>✕</button>
+              </div>
+            </div>
+          </div>
+        );})}
+        {done.length>0&&(
+          <div style={{marginTop:4}}>
+            <div style={{fontSize:10,color:"rgba(255,255,255,0.18)",fontWeight:600,letterSpacing:.5,marginBottom:8,paddingLeft:2}}>COMPLETATI</div>
+            {done.map(g=>(
+              <div key={g.id} className="card" style={{border:"1px solid rgba(0,201,126,0.1)",opacity:.58,marginBottom:7}}>
+                <div style={{display:"flex",gap:11,alignItems:"center"}}>
+                  <div style={{width:30,height:30,borderRadius:9,background:"rgba(0,201,126,0.08)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:14,flexShrink:0}}>✅</div>
+                  <div style={{flex:1}}><div style={{fontSize:12,fontWeight:500,color:"rgba(255,255,255,0.27)",textDecoration:"line-through"}}>{g.text}</div><div style={{fontSize:10,color:"#00da78",fontWeight:600,marginTop:1}}>RAGGIUNTO</div></div>
+                  <button onClick={()=>removeGoal(g.id)} className="btn-g" style={{fontSize:13}}>✕</button>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </>);
+    })()}
+  </>);
+}
+
+function CalendarTab({calEvents,setCalEvents}){
+  const TODAY=new Date();
+  const todayStr2=TODAY.toISOString().split("T")[0];
+  const [viewDate,setViewDate]=React.useState(todayStr2);
+  const [addModal,setAddModal]=React.useState(null);
+  const [editEvt,setEditEvt]=React.useState(null);
+  const [draftText,setDraftText]=React.useState("");
+  const [draftHour,setDraftHour]=React.useState(8);
+  const [draftDuration,setDraftDuration]=React.useState(1); // ore
+  const [draftRecur,setDraftRecur]=React.useState([]); // [] = una volta, [0,1,...] = giorni della settimana
+  const DAYS_IT=["Lun","Mar","Mer","Gio","Ven","Sab","Dom"];
+  const DAYS_FULL=["Lunedì","Martedì","Mercoledì","Giovedì","Venerdì","Sabato","Domenica"];
+  const MONTHS=["Gen","Feb","Mar","Apr","Mag","Giu","Lug","Ago","Set","Ott","Nov","Dic"];
+
+  function parsedViewDate(){return new Date(viewDate+"T12:00:00");}
+  function fmt(d){return d.toISOString().split("T")[0];}
+  function getDow(dateStr){return(new Date(dateStr+"T12:00:00").getDay()+6)%7;}
+
+  function prevDay(){const d=parsedViewDate();d.setDate(d.getDate()-1);setViewDate(fmt(d));}
+  function nextDay(){const d=parsedViewDate();d.setDate(d.getDate()+1);setViewDate(fmt(d));}
+
+  // Evento "visibile" su un dato giorno:
+  // - recur=[] → oneshot, visibile solo su evt.date
+  // - recur=[0,2,4] → visibile tutti i Lun/Mer/Ven
+  function isEventOnDate(evt, dateStr){
+    const dow=getDow(dateStr);
+    if(!evt.recur||evt.recur.length===0){
+      return evt.date===dateStr;
+    }
+    return evt.recur.includes(dow);
+  }
+
+  function getEventsForDate(dateStr){
+    return calEvents.filter(e=>isEventOnDate(e,dateStr)).sort((a,b)=>a.hour-b.hour);
+  }
+
+  // Per ogni ora h, restituisce gli eventi che iniziano lì O che "si estendono" su quell'ora
+  function getEventsForHour(dateStr,h){
+    return getEventsForDate(dateStr).filter(e=>{
+      const dur=e.duration||1;
+      return h>=e.hour&&h<e.hour+dur;
+    });
+  }
+
+  const eventsToday=getEventsForDate(viewDate);
+
+  function openAdd(hour){
+    setDraftText("");setDraftHour(hour);setDraftDuration(1);setDraftRecur([]);
+    setAddModal({date:viewDate});
+    setEditEvt(null);
+  }
+
+  function openEdit(evt){
+    setDraftText(evt.text);
+    setDraftHour(evt.hour);
+    setDraftDuration(evt.duration||1);
+    setDraftRecur(Array.isArray(evt.recur)?evt.recur:(evt.recur!=null&&evt.recur!==undefined?[evt.recur]:[]));
+    setEditEvt(evt);
+    setAddModal(null);
+  }
+
+  function toggleRecurDay(i){
+    setDraftRecur(prev=>prev.includes(i)?prev.filter(x=>x!==i):[...prev,i].sort());
+  }
+
+  function saveEvent(){
+    if(!draftText.trim())return;
+    const isRecurring=draftRecur.length>0;
+    const evtBase={text:draftText.trim(),hour:draftHour,duration:draftDuration||1};
+    if(editEvt){
+      setCalEvents(prev=>prev.map(e=>e.id===editEvt.id?{...e,...evtBase,recur:isRecurring?draftRecur:undefined,date:isRecurring?undefined:addModal?.date||e.date}:e));
+      setEditEvt(null);
+    } else {
+      const newEvt={id:Date.now(),...evtBase,recur:isRecurring?draftRecur:undefined,date:isRecurring?undefined:addModal.date};
+      setCalEvents(prev=>[...prev,newEvt]);
+      setAddModal(null);
+    }
+    setDraftText("");setDraftHour(8);setDraftDuration(1);setDraftRecur([]);
+  }
+
+  function deleteEvent(id){setCalEvents(prev=>prev.filter(e=>e.id!==id));}
+
+  const HOURS=Array.from({length:18},(_,i)=>i+6); // 6:00-23:00
+
+  const isToday=viewDate===todayStr2;
+  const vd=parsedViewDate();
+  const vdow=getDow(viewDate);
+  const dateLabel=(isToday?"Oggi — ":"")+DAYS_FULL[vdow]+" "+vd.getDate()+" "+MONTHS[vd.getMonth()];
+
+  return(
+    <div>
+      {/* Header nav */}
+      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:12,background:"rgba(255,255,255,0.04)",border:"1px solid rgba(255,255,255,0.07)",borderRadius:13,padding:"9px 13px"}}>
+        <button onClick={prevDay} style={{background:"rgba(255,255,255,0.06)",border:"1px solid rgba(255,255,255,0.09)",borderRadius:9,color:"rgba(255,255,255,0.5)",fontSize:16,padding:"5px 13px",cursor:"pointer"}}>‹</button>
+        <div style={{textAlign:"center"}}>
+          <div style={{fontSize:13,fontWeight:700,color:"rgba(255,255,255,0.88)"}}>{dateLabel}</div>
+          {!isToday&&<button onClick={()=>setViewDate(todayStr2)} style={{background:"none",border:"none",color:"#ff6a20",fontSize:10,cursor:"pointer",padding:"2px 0",fontWeight:600}}>Torna ad oggi</button>}
+        </div>
+        <button onClick={nextDay} style={{background:"rgba(255,255,255,0.06)",border:"1px solid rgba(255,255,255,0.09)",borderRadius:9,color:"rgba(255,255,255,0.5)",fontSize:16,padding:"5px 13px",cursor:"pointer"}}>›</button>
+      </div>
+
+      {/* Modal aggiunta/modifica */}
+      {(addModal||editEvt)&&(
+        <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.7)",zIndex:200,display:"flex",alignItems:"flex-end",justifyContent:"center"}} onClick={()=>{setAddModal(null);setEditEvt(null);}}>
+          <div onClick={e=>e.stopPropagation()} style={{background:"#0e0f1a",border:"1px solid rgba(255,255,255,0.1)",borderRadius:"18px 18px 0 0",padding:"20px 16px",width:"100%",maxWidth:430,maxHeight:"85vh",overflowY:"auto"}}>
+            <div style={{fontSize:13,fontWeight:700,color:"rgba(255,255,255,0.8)",marginBottom:12}}>
+              {editEvt?"✏️ Modifica evento":"+ Nuovo evento"}
+            </div>
+            <input autoFocus value={draftText} onChange={e=>setDraftText(e.target.value)}
+              onKeyDown={e=>e.key==="Enter"&&saveEvent()}
+              placeholder="Descrizione..." className="inp" style={{marginBottom:12}}/>
+
+            {/* Ora di inizio + Durata */}
+            <div style={{display:"flex",gap:8,marginBottom:12}}>
+              <div style={{flex:1}}>
+                <div style={{fontSize:10,color:"rgba(255,255,255,0.3)",fontWeight:600,marginBottom:5}}>ORA INIZIO</div>
+                <div style={{display:"flex",gap:4,flexWrap:"wrap"}}>
+                  {[6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22].map(h=>(
+                    <button key={h} onClick={()=>setDraftHour(h)} style={{padding:"4px 7px",borderRadius:7,fontSize:11,fontWeight:600,cursor:"pointer",border:"1px solid "+(draftHour===h?"rgba(255,77,0,0.5)":"rgba(255,255,255,0.08)"),background:draftHour===h?"rgba(255,77,0,0.15)":"rgba(255,255,255,0.03)",color:draftHour===h?"#ff6a20":"rgba(255,255,255,0.35)"}}>{h}:00</button>
+                  ))}
+                </div>
+              </div>
+              <div style={{flexShrink:0,minWidth:90}}>
+                <div style={{fontSize:10,color:"rgba(255,255,255,0.3)",fontWeight:600,marginBottom:5}}>DURATA</div>
+                <div style={{display:"flex",gap:3,flexDirection:"column"}}>
+                  {[1,2,3,4].map(d=>(
+                    <button key={d} onClick={()=>setDraftDuration(d)} style={{padding:"5px 10px",borderRadius:7,fontSize:11,fontWeight:600,cursor:"pointer",border:"1px solid "+(draftDuration===d?"rgba(0,200,120,0.4)":"rgba(255,255,255,0.08)"),background:draftDuration===d?"rgba(0,200,120,0.12)":"rgba(255,255,255,0.03)",color:draftDuration===d?"#00da78":"rgba(255,255,255,0.35)"}}>
+                      {d} {d===1?"ora":"ore"}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+
+            {/* Ripetizione multi-giorno */}
+            <div style={{fontSize:10,color:"rgba(255,255,255,0.3)",fontWeight:600,letterSpacing:.5,marginBottom:8}}>RIPETI OGNI SETTIMANA (lascia vuoto per evento singolo)</div>
+            <div style={{display:"flex",gap:5,marginBottom:14}}>
+              {DAYS_IT.map((d,i)=>(
+                <button key={i} onClick={()=>toggleRecurDay(i)} style={{flex:1,padding:"7px 0",borderRadius:8,fontSize:11,fontWeight:700,cursor:"pointer",border:"1px solid "+(draftRecur.includes(i)?"rgba(0,201,126,0.45)":"rgba(255,255,255,0.08)"),background:draftRecur.includes(i)?"rgba(0,201,126,0.15)":"rgba(255,255,255,0.03)",color:draftRecur.includes(i)?"#00da78":"rgba(255,255,255,0.3)"}}>{d}</button>
+              ))}
+            </div>
+            {draftRecur.length>0&&(
+              <div style={{fontSize:11,color:"#00da78",marginBottom:12,fontWeight:500}}>
+                🔁 Ogni {draftRecur.map(i=>DAYS_FULL[i]).join(", ")}
+              </div>
+            )}
+
+            <div style={{display:"flex",gap:8}}>
+              <button onClick={()=>{setAddModal(null);setEditEvt(null);}} style={{flex:1,padding:"11px",borderRadius:10,border:"1px solid rgba(255,255,255,0.08)",background:"rgba(255,255,255,0.04)",color:"rgba(255,255,255,0.4)",fontSize:13,cursor:"pointer"}}>Annulla</button>
+              {editEvt&&<button onClick={()=>{deleteEvent(editEvt.id);setEditEvt(null);}} style={{padding:"11px 14px",borderRadius:10,border:"1px solid rgba(255,77,0,0.2)",background:"rgba(255,77,0,0.08)",color:"#ff6a20",fontSize:13,cursor:"pointer"}}>✕</button>}
+              <button onClick={saveEvent} style={{flex:2,padding:"11px",borderRadius:10,border:"none",background:"linear-gradient(135deg,#ff4d00,#ff8c00)",color:"#000",fontSize:13,fontWeight:700,cursor:"pointer"}}>SALVA ✓</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Timeline */}
+      <div style={{background:"rgba(255,255,255,0.02)",border:"1px solid rgba(255,255,255,0.06)",borderRadius:14,overflow:"hidden"}}>
+        {HOURS.map(h=>{
+          const hEvents=getEventsForHour(viewDate,h);
+          const isCurrentHour=isToday&&new Date().getHours()===h;
+          return(
+            <div key={h} style={{display:"flex",minHeight:42,borderBottom:"1px solid rgba(255,255,255,0.035)",background:isCurrentHour?"rgba(255,77,0,0.04)":"transparent",position:"relative"}}>
+              <div style={{width:42,flexShrink:0,padding:"0 8px",display:"flex",alignItems:"flex-start",paddingTop:6}}>
+                <span style={{fontSize:11,fontWeight:isCurrentHour?700:400,color:isCurrentHour?"#ff6a20":"rgba(255,255,255,0.2)",fontVariantNumeric:"tabular-nums"}}>{h.toString().padStart(2,"0")}:00</span>
+              </div>
+              <div style={{flex:1,padding:"4px 6px 4px 0",display:"flex",flexDirection:"column",gap:3}}>
+                {hEvents.map(evt=>{
+                  const isStart=evt.hour===h;
+                  const isRecur=Array.isArray(evt.recur)&&evt.recur.length>0;
+                  const dur=evt.duration||1;
+                  return(
+                    <button key={evt.id+"_"+h} onClick={()=>isStart&&openEdit(evt)}
+                      style={{textAlign:"left",background:!isStart?"rgba(255,255,255,0.02)":isRecur?"rgba(0,220,130,0.08)":"rgba(255,255,255,0.06)",border:"1px solid "+(!isStart?"rgba(255,255,255,0.04)":isRecur?"rgba(0,220,130,0.22)":"rgba(255,255,255,0.09)"),borderRadius:9,padding:"6px 10px",cursor:isStart?"pointer":"default",display:"flex",alignItems:"center",gap:7,width:"100%",opacity:!isStart?0.5:1}}>
+                      {isStart&&dur>1&&<span style={{fontSize:9,color:"#4db8ff",fontWeight:700,background:"rgba(0,140,255,0.15)",padding:"2px 6px",borderRadius:4,flexShrink:0}}>⏱ {dur}h</span>}
+                      {isStart&&isRecur&&<span style={{fontSize:8,color:"#00da78",fontWeight:700,background:"rgba(0,220,130,0.15)",padding:"2px 5px",borderRadius:4,flexShrink:0}}>🔁</span>}
+                      <div style={{flex:1,textAlign:"left"}}>
+                        <div style={{fontSize:12,fontWeight:isStart?600:400,color:"rgba(255,255,255,0.6)"}}>{!isStart?"↕ "+evt.text:evt.text}</div>
+                        {isStart&&isRecur&&<div style={{fontSize:9,color:"rgba(0,218,120,0.6)",marginTop:1}}>{evt.recur.map(i=>DAYS_IT[i]).join(" · ")}</div>}
+                      </div>
+                      {isStart&&<span style={{fontSize:10,color:"rgba(255,255,255,0.18)"}}>✏️</span>}
+                    </button>
+                  );
+                })}
+                <button onClick={()=>openAdd(h)}
+                  style={{background:"transparent",border:"1px dashed rgba(255,255,255,0.06)",borderRadius:7,padding:"3px 6px",cursor:"pointer",color:"rgba(255,255,255,0.12)",fontSize:11,textAlign:"left",width:"100%"}}>+ aggiungi</button>
+              </div>
+              {isCurrentHour&&<div style={{position:"absolute",left:42,right:0,top:0,height:1.5,background:"rgba(255,77,0,0.5)",zIndex:1}}/>}
+            </div>
+          );
+        })}
+      </div>
+      <div style={{height:20}}/>
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(React.createElement(App));
+  </script>
+</body>
+</html>
